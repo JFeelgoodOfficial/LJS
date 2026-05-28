@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background-color: #0a0a0a;
+  color: #ffffff;
+  font-family: 'Press Start 2P', cursive;
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+}
+
+#__next,
+main {
+  height: 100%;
+  width: 100%;
+}
+
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
