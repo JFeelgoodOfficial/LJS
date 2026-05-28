@@ -697,4 +697,399 @@ export default function GameCanvas() {
     const keys  = gs.keys;
 
     const left  = keys["ArrowLeft"]  || keys["a"] || keys["A"];
-    const 
+    const right = keys["ArrowRight"] || keys["d"] || keys["D"];
+    const jump  = keys["ArrowUp"]    || keys["w"] || keys["W"] || keys["z"] || keys["Z"];
+    const shoot = keys["Space"]      || keys[" "] || keys["shoot_click"];
+
+    if (left)       { gs.pvx = -PLAYER_SPEED; gs.pFacing = -1; }
+    else if (right) { gs.pvx =  PLAYER_SPEED; gs.pFacing =  1; }
+    else              gs.pvx *= 0.75;
+
+    if (jump && gs.pOnGround) { gs.pvy = JUMP_FORCE; gs.pOnGround = false; audio.playJump(); }
+
+    gs.pvy += GRAVITY;
+    gs.px  += gs.pvx;
+    gs.py  += gs.pvy;
+
+    gs.pAnimTimer++;
+    if (Math.abs(gs.pvx) > 0.5 && gs.pAnimTimer % 8 === 0) gs.pFrame = (gs.pFrame + 1) % 4;
+    if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
+
+    gs.pOnGround = false;
+    if (gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
+    if (gs.px < 20) gs.px = 20;
+
+    gs.platforms.forEach((p) => {
+      const pRect:   Rect = { x: gs.px + 2, y: gs.py,    w: 28, h: 40 };
+      const platRect:Rect = { x: p.x,       y: p.y,      w: p.w, h: p.h };
+      if (rectsOverlap(pRect, platRect) && gs.pvy >= 0 && gs.py + 40 - gs.pvy <= p.y + 4) {
+        gs.py = p.y - 40; gs.pvy = 0; gs.pOnGround = true;
+      }
+    });
+
+    if (gs.shootCooldown > 0) gs.shootCooldown--;
+    if (shoot && gs.shootCooldown === 0 && gs.ammo > 0) {
+      gs.bullets.push({ x: gs.px + (gs.pFacing > 0 ? 30 : -10), y: gs.py + 12, vx: BULLET_SPEED * gs.pFacing, active: true });
+      if (gs.ammo !== Infinity) gs.ammo--;
+      gs.shootCooldown = 12;
+      audio.playShoot();
+    }
+
+    gs.bullets.forEach((b) => {
+      if (!b.active) return;
+      b.x += b.vx;
+      if (b.x < -20 || b.x > gs.scrollX + CANVAS_W + 20) { b.active = false; return; }
+      gs.blocks.forEach((bl) => {
+        if (bl.broken || !b.active) return;
+        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: bl.x, y: bl.y, w: bl.w, h: bl.h })) {
+          bl.hp--; b.active = false;
+          spawnParticles(gs.particles, b.x, b.y, bl.color, 6, 3); gs.score += 10;
+          if (bl.hp <= 0) { bl.broken = true; spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 12, 5); gs.score += 50; audio.playHit(); }
+        }
+      });
+      gs.enemies.forEach((en) => {
+        if (!en.active || !b.active) return;
+        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: en.x, y: en.y, w: en.w, h: en.h })) {
+          en.hp--; b.active = false;
+          spawnParticles(gs.particles, b.x, b.y, "#6B8E23", 6, 3); gs.score += 30;
+          if (en.hp <= 0) { en.active = false; spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5); gs.score += 100; audio.playEnemyDie(); }
+        }
+      });
+    });
+    gs.bullets = gs.bullets.filter((b) => b.active);
+
+    gs.enemies.forEach((en) => {
+      if (!en.active) return;
+      en.vy += GRAVITY; en.x += en.vx; en.y += en.vy;
+      if (en.y + en.h >= GROUND_Y) { en.y = GROUND_Y - en.h; en.vy = 0; en.onGround = true; }
+      gs.platforms.forEach((p) => {
+        if (rectsOverlap({ x: en.x, y: en.y, w: en.w, h: en.h }, { x: p.x, y: p.y, w: p.w, h: p.h }) && en.vy >= 0 && en.y + en.h - en.vy <= p.y + 4) {
+          en.y = p.y - en.h; en.vy = 0; en.onGround = true;
+        }
+      });
+      if (en.x < 0 || en.x > gs.scrollX + CANVAS_W) en.vx *= -1;
+      if (gs.pInvincible === 0 && rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: en.x, y: en.y, w: en.w, h: en.h })) {
+        gs.lives--; gs.pInvincible = 90; audio.playDeath();
+        spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+        if (gs.lives <= 0) { gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+      }
+    });
+
+    if (gs.goldenBox && gs.goldenBox.spawned && !gs.goldenBox.collected) {
+      const gb = gs.goldenBox;
+      if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: gb.x, y: gb.y, w: gb.w, h: gb.h })) {
+        gb.collected = true;
+        const idx = ["A","B","C"].indexOf(gb.letter);
+        if (idx >= 0) {
+          gs.collectedBoxes[idx] = true;
+          if (!gs.collectedLetters.includes(gb.letter)) gs.collectedLetters.push(gb.letter);
+        }
+        spawnParticles(gs.particles, gb.x + gb.w / 2, gb.y + gb.h / 2, "#FFD700", 20, 6);
+        gs.score += 500; audio.playCollect();
+        setHudData((prev) => ({ ...prev, collectedBoxes: [...gs.collectedBoxes] }));
+      }
+    }
+
+    if (gs.level === 4 && gs.phase === "playing") {
+      const playerCenterX = gs.px + 16;
+      const playerCenterY = gs.py + 20;
+      gs.pedestalSlots.forEach((slot) => {
+        if (!slot.filled && gs.boxesToPlace.includes(slot.letter)) {
+          const dist = Math.hypot(playerCenterX - slot.x, playerCenterY - (slot.y + 18));
+          if (dist < 60 && gs.pOnGround) {
+            gs.placeTimer++;
+            if (gs.placeTimer > 60) {
+              slot.filled = true;
+              gs.boxesToPlace = gs.boxesToPlace.filter((l) => l !== slot.letter);
+              gs.placeTimer = 0;
+              spawnParticles(gs.particles, slot.x, slot.y, "#FFD700", 20, 5);
+              audio.playPlace();
+              if (gs.pedestalSlots.every((s) => s.filled)) {
+                setTimeout(() => {
+                  if (stateRef.current) { stateRef.current.phase = "win"; setGamePhase("win"); audio.playWin(); }
+                }, 600);
+              }
+            }
+          } else { gs.placeTimer = 0; }
+        }
+      });
+    }
+
+    if (gs.level !== 4) {
+      gs.scrollX += gs.scrollSpeed;
+      gs.levelProgress = gs.scrollX;
+      const drift = gs.scrollSpeed;
+      gs.blocks.forEach((b)   => { b.x -= drift; });
+      gs.platforms.forEach((p) => { p.x -= drift; });
+      gs.enemies.forEach((e)   => { e.x -= drift; });
+      if (gs.goldenBox) gs.goldenBox.x -= drift;
+
+      if (gs.px > CANVAS_W - 100) gs.px = CANVAS_W - 100;
+
+      const lastPlat = gs.platforms.reduce((mx, p) => Math.max(mx, p.x), 0);
+      if (lastPlat < CANVAS_W + 400) {
+        const chunk = generateLevel(gs.level, CANVAS_W + 400);
+        gs.blocks.push(...chunk.blocks);
+        gs.platforms.push(...chunk.platforms);
+        gs.enemies.push(...chunk.enemies);
+      }
+
+      if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
+        gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
+      }
+
+      if (gs.scrollX >= gs.levelLength && gs.goldenBox?.collected) {
+        gs.phase = "levelComplete"; gs.levelTransTimer = 0; setGamePhase("levelComplete"); audio.playLevelUp();
+      }
+
+      gs.blocks    = gs.blocks.filter((b) => b.x > -TILE);
+      gs.platforms = gs.platforms.filter((p) => p.x > -200);
+      gs.enemies   = gs.enemies.filter((e) => e.x > -100);
+    }
+
+    if (gs.level === 3) {
+      gs.bgParticles.forEach((p) => {
+        p.x += p.vx; p.y += p.vy; p.life--;
+        if (p.life <= 0) { p.x = Math.random() * CANVAS_W; p.y = GROUND_Y + Math.random() * 20; p.life = p.maxLife; }
+      });
+    }
+
+    gs.particles.forEach((p) => { p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; });
+    gs.particles = gs.particles.filter((p) => p.life > 0);
+
+    if (gs.py > CANVAS_H + 100) {
+      gs.lives--; gs.py = GROUND_Y - 60; gs.pvy = 0;
+      if (gs.lives <= 0) { gs.phase = "dead"; setGamePhase("dead"); audio.playDeath(); }
+      else { gs.pInvincible = 90; audio.playDeath(); }
+    }
+
+    if (tick % 6 === 0) {
+      setHudData({ score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo });
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  //  RENDER
+  // ─────────────────────────────────────────────
+  function renderGame(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
+    ctx.imageSmoothingEnabled = false;
+    drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
+
+    if (gs.level === 4) {
+      drawPedestal(ctx, gs.pedestalSlots, tick);
+      const unplaced = gs.pedestalSlots.filter((s) => !s.filled);
+      if (unplaced.length > 0 && gs.boxesToPlace.length > 0) {
+        ctx.fillStyle = "rgba(255,215,0,0.9)";
+        ctx.font = '7px "Press Start 2P", cursive'; ctx.textAlign = "center";
+        ctx.fillText("WALK TO PEDESTAL TO PLACE BOX", CANVAS_W / 2, CANVAS_H - 50);
+        if (gs.placeTimer > 0) {
+          ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120, 8);
+          ctx.fillStyle = "#FFD700"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120 * (gs.placeTimer / 60), 8);
+        }
+      }
+    }
+
+    drawGround(ctx, gs.level, gs.scrollX);
+    gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
+    gs.blocks.forEach((b)     => drawBlock(ctx, b));
+    if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
+    gs.enemies.forEach((e)    => drawEnemy(ctx, e));
+    gs.bullets.forEach((b)    => drawBullet(ctx, b));
+    drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
+
+    gs.particles.forEach((p) => {
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+    });
+    ctx.globalAlpha = 1;
+
+    if (gs.level !== 4) drawHUDOverlay(ctx, gs.level, gs.scrollX, gs.levelLength);
+
+    const lvlNames = ["FOREST ZONE", "DUNGEON ZONE", "LAVA ZONE", "FINAL CHAMBER"];
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = '7px "Press Start 2P", cursive';
+    ctx.textAlign = "right"; ctx.fillText(lvlNames[gs.level - 1] ?? "", CANVAS_W - 10, CANVAS_H - 6);
+
+    if (typeof gs.ammo === "number" && gs.ammo <= 5 && gs.ammo > 0 && Math.sin(tick * 0.2) > 0) {
+      ctx.fillStyle = "#FF4444"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.textAlign = "center"; ctx.fillText("LOW AMMO!", CANVAS_W / 2, 60);
+    }
+    if (typeof gs.ammo === "number" && gs.ammo === 0) {
+      ctx.fillStyle = "#FF0000"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.textAlign = "center"; ctx.fillText("NO AMMO!", CANVAS_W / 2, 60);
+    }
+
+    // Draw on-canvas touch controls (always drawn so they show on mobile)
+    if (isTouchRef.current) drawTouchControls(ctx, gs.keys);
+  }
+
+  function drawTitleScreen(ctx: CanvasRenderingContext2D, tick: number) {
+    const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    grad.addColorStop(0, "#0a0a1a"); grad.addColorStop(1, "#1a0a2e");
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let i = 0; i < 60; i++) {
+      const sx = (i * 137 + 50) % CANVAS_W;
+      const sy = (i * 73 + 20) % (CANVAS_H / 2);
+      const alpha = 0.4 + 0.6 * Math.sin(i + tick * 0.02);
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fillRect(sx, sy, i % 3 === 0 ? 2 : 1, i % 3 === 0 ? 2 : 1);
+    }
+    ctx.fillStyle = "#FFD700"; ctx.font = '28px "Press Start 2P", cursive';
+    ctx.textAlign = "center"; ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 20;
+    ctx.fillText("PIXEL RUNNER", CANVAS_W / 2, 130); ctx.shadowBlur = 0;
+    ctx.fillStyle = "#FF8C00"; ctx.font = '11px "Press Start 2P", cursive';
+    ctx.fillText("BLAST & COLLECT", CANVAS_W / 2, 168);
+    drawPlayer(ctx, CANVAS_W / 2 - 16, CANVAS_H / 2 - 10 + Math.sin(tick * 0.05) * 5, 1, Math.floor(tick / 10) % 4, 0);
+    ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = '7px "Press Start 2P", cursive';
+    ctx.fillText("ARROW KEYS / WASD — MOVE & JUMP", CANVAS_W / 2, CANVAS_H / 2 + 70);
+    ctx.fillText("SPACE / CLICK / TOUCH — SHOOT", CANVAS_W / 2, CANVAS_H / 2 + 92);
+    if (Math.floor(tick / 30) % 2 === 0) {
+      ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
+      ctx.fillText("TAP / CLICK / SPACE TO START", CANVAS_W / 2, CANVAS_H - 60);
+    }
+    ctx.fillStyle = "rgba(255,215,0,0.5)"; ctx.font = '7px "Press Start 2P", cursive';
+    ctx.fillText("FIND 3 GOLDEN BOXES — UNCOVER THE SECRET!", CANVAS_W / 2, CANVAS_H - 30);
+  }
+
+  function drawDeadScreen(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
+    const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    grad.addColorStop(0, "#1a0000"); grad.addColorStop(1, "#0a0000");
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.fillStyle = "#FF0000"; ctx.font = '28px "Press Start 2P", cursive';
+    ctx.textAlign = "center"; ctx.shadowColor = "#880000"; ctx.shadowBlur = 15;
+    ctx.fillText("GAME OVER", CANVAS_W / 2, CANVAS_H / 2 - 50); ctx.shadowBlur = 0;
+    ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
+    ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2);
+    ctx.fillStyle = gs.lives > 0 ? "#aaa" : "#888"; ctx.font = '8px "Press Start 2P", cursive';
+    ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 35);
+    if (Math.floor(tick / 30) % 2 === 0) {
+      ctx.fillStyle = "#FFD700"; ctx.font = '9px "Press Start 2P", cursive';
+      ctx.fillText("TAP / SPACE / CLICK TO CONTINUE", CANVAS_W / 2, CANVAS_H - 60);
+    }
+  }
+
+  function drawLevelCompleteScreen(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
+    const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    grad.addColorStop(0, "#001a00"); grad.addColorStop(1, "#003300");
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let i = 0; i < 30; i++) {
+      const colors = ["#FFD700","#FF8C00","#00FF00","#00FFFF","#FF69B4"];
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillRect((i * 137 * tick) % CANVAS_W, (i * 73 + tick * (i % 5 + 1)) % CANVAS_H, 4, 4);
+    }
+    ctx.fillStyle = "#FFD700"; ctx.font = '24px "Press Start 2P", cursive';
+    ctx.textAlign = "center"; ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 15;
+    ctx.fillText("LEVEL CLEAR!", CANVAS_W / 2, 120); ctx.shadowBlur = 0;
+    const lvlNames = ["FOREST ZONE","DUNGEON ZONE","LAVA ZONE"];
+    ctx.fillStyle = "#ffffff"; ctx.font = '9px "Press Start 2P", cursive';
+    ctx.fillText(lvlNames[gs.level - 1] ?? "", CANVAS_W / 2, 155);
+    ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
+    ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, 200);
+    ctx.fillStyle = "#aaa"; ctx.font = '8px "Press Start 2P", cursive';
+    ctx.fillText(`GOLDEN BOX [${["A","B","C"][gs.level - 1]}] COLLECTED!`, CANVAS_W / 2, 240);
+    if (gs.collectedBoxes.every(Boolean)) {
+      ctx.fillStyle = "#FFD700"; ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 10;
+      ctx.fillText("ALL BOXES FOUND! FINAL LEVEL UNLOCKED!", CANVAS_W / 2, 275); ctx.shadowBlur = 0;
+    }
+    if (Math.floor(tick / 30) % 2 === 0) {
+      ctx.fillStyle = "#ffffff"; ctx.font = '9px "Press Start 2P", cursive';
+      ctx.fillText("TAP / SPACE / CLICK TO CONTINUE", CANVAS_W / 2, CANVAS_H - 60);
+    }
+  }
+
+  function drawWinScreen(ctx: CanvasRenderingContext2D, tick: number) {
+    ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2 + tick * 0.005;
+      const len = 300 + Math.sin(tick * 0.03 + i) * 30;
+      const alpha = 0.04 + 0.03 * Math.sin(tick * 0.04 + i);
+      ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(CANVAS_W / 2, CANVAS_H / 2 - 60);
+      ctx.lineTo(CANVAS_W / 2 + Math.cos(angle) * len, CANVAS_H / 2 - 60 + Math.sin(angle) * len);
+      ctx.lineTo(CANVAS_W / 2 + Math.cos(angle + 0.2) * len, CANVAS_H / 2 - 60 + Math.sin(angle + 0.2) * len);
+      ctx.closePath(); ctx.fill();
+    }
+    for (let i = 0; i < 40; i++) {
+      const alpha = Math.sin(tick * 0.1 + i) * 0.5 + 0.5;
+      ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+      ctx.fillRect((i * 179 + tick * (i % 3 + 1) * 2) % CANVAS_W, (i * 97 + tick * (i % 4 + 1)) % CANVAS_H, 3, 3);
+    }
+    for (let i = 0; i < 3; i++) {
+      const bx = CANVAS_W / 2 - 80 + i * 80;
+      const by = 40 + Math.sin(tick * 0.04 + i) * 6;
+      ctx.fillStyle = "#FFD700"; ctx.fillRect(bx, by, 40, 40);
+      ctx.strokeStyle = "#FFA500"; ctx.lineWidth = 3; ctx.strokeRect(bx + 1, by + 1, 38, 38);
+      ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(bx+20,by); ctx.lineTo(bx+20,by+40); ctx.moveTo(bx,by+20); ctx.lineTo(bx+40,by+20); ctx.stroke();
+      ctx.fillStyle = "#8B6914"; ctx.font = '10px "Press Start 2P", cursive';
+      ctx.textAlign = "center"; ctx.fillText(["A","B","C"][i], bx + 20, by + 26);
+    }
+    const pulse = 1 + 0.04 * Math.sin(tick * 0.06);
+    ctx.save();
+    ctx.translate(CANVAS_W / 2, CANVAS_H / 2 - 30);
+    ctx.scale(pulse, pulse);
+    ctx.fillStyle = "#FFD700"; ctx.font = '22px "Press Start 2P", cursive';
+    ctx.textAlign = "center"; ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 30;
+    ctx.fillText("Leola Jane Snapp!", 0, 0); ctx.shadowBlur = 0;
+    ctx.restore();
+    ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = '9px "Press Start 2P", cursive';
+    ctx.textAlign = "center";
+    ctx.fillText("ALL GOLDEN BOXES PLACED!", CANVAS_W / 2, CANVAS_H / 2 + 30);
+    ctx.fillText("THE MYSTERY IS REVEALED.", CANVAS_W / 2, CANVAS_H / 2 + 55);
+    if (Math.floor(tick / 40) % 2 === 0) {
+      ctx.fillStyle = "#ffffff"; ctx.font = '7px "Press Start 2P", cursive';
+      ctx.fillText("TAP / CLICK TO PLAY AGAIN", CANVAS_W / 2, CANVAS_H - 30);
+    }
+  }
+
+  return (
+    <div className="relative w-full h-screen flex items-center justify-center bg-pixel-dark overflow-hidden">
+      <div
+        className="relative"
+        style={{
+          width: `${CANVAS_W}px`,
+          maxWidth: "100vw",
+          boxShadow: "0 0 40px rgba(255,215,0,0.15), 0 0 80px rgba(0,0,0,0.8)",
+          border: "3px solid #333",
+        }}
+      >
+        {gamePhase === "playing" && (
+          <HUD
+            score={hudData.score}
+            level={hudData.level}
+            lives={hudData.lives}
+            collectedBoxes={hudData.collectedBoxes}
+            ammo={hudData.ammo}
+          />
+        )}
+
+        <canvas
+          ref={canvasRef}
+          width={CANVAS_W}
+          height={CANVAS_H}
+          onClick={handleCanvasClick}
+          className="block"
+          style={{
+            imageRendering: "pixelated",
+            width: "100%",
+            height: "auto",
+            touchAction: "none",   /* prevents browser scroll/zoom on touch */
+            cursor: "pointer",
+            userSelect: "none",
+            WebkitUserSelect: "none",
+          }}
+        />
+      </div>
+
+      {gamePhase === "playing" && !isTouchRef.current && (
+        <div
+          className="absolute bottom-2 left-0 w-full text-center pointer-events-none"
+          style={{ fontFamily: '"Press Start 2P", cursive', fontSize: "7px", color: "rgba(255,255,255,0.3)" }}
+        >
+          ← → MOVE &nbsp;|&nbsp; ↑ / W JUMP &nbsp;|&nbsp; SPACE / CLICK SHOOT
+        </div>
+      )}
+    </div>
+  );
+}
