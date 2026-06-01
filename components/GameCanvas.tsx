@@ -44,10 +44,31 @@ interface Particle { x: number; y: number; vx: number; vy: number; life: number;
 interface Bullet { x: number; y: number; vx: number; active: boolean; }
 interface Block { x: number; y: number; w: number; h: number; hp: number; maxHp: number; color: string; broken: boolean; }
 interface GoldenBox { x: number; y: number; w: number; h: number; collected: boolean; letter: string; spawned: boolean; }
-interface Enemy { x: number; y: number; w: number; h: number; vx: number; vy: number; hp: number; onGround: boolean; active: boolean; }
+interface AmmoCrate { x: number; y: number; w: number; h: number; collected: boolean; }
+interface Enemy {
+  x: number; y: number; w: number; h: number;
+  vx: number; vy: number; hp: number;
+  onGround: boolean; active: boolean;
+  type: "walker" | "jumper" | "flyer";
+  jumpTimer: number;
+  sinOffset: number;
+}
 interface Platform { x: number; y: number; w: number; h: number; }
 interface Star { x: number; y: number; size: number; twinkle: number; }
 interface PedestalSlot { x: number; y: number; filled: boolean; letter: string; }
+interface Boss {
+  x: number; y: number; w: number; h: number;
+  vx: number; vy: number;
+  hp: number; maxHp: number;
+  phase: number;
+  active: boolean;
+  onGround: boolean;
+  defeated: boolean;
+  chargeTimer: number;
+  jumpTimer: number;
+  chargeActive: boolean;
+  chargeFrames: number;
+}
 
 interface GameState {
   phase: "title" | "playing" | "dead" | "levelComplete" | "win";
@@ -81,7 +102,9 @@ interface GameState {
   enemies: Enemy[];
   platforms: Platform[];
   goldenBox: GoldenBox | null;
+  ammoCrates: AmmoCrate[];
   stars: Star[];
+  boss: Boss | null;
 
   pedestalSlots: PedestalSlot[];
   boxesToPlace: string[];
@@ -94,6 +117,10 @@ interface GameState {
   deathTimer: number;
   titleAnimTimer: number;
   bgParticles: Particle[];
+
+  shakeTimer: number;
+  comboCount: number;
+  comboTimer: number;
 }
 
 // ─────────────────────────────────────────────
@@ -144,8 +171,9 @@ function createAudio() {
   }
   function playPlace()    { playTone(440, 0.12, "square", 0.18); }
   function playEnemyDie() { playTone(200, 0.12, "sawtooth", 0.13); }
+  function playTypeTick(freq: number) { playTone(freq, 0.08, "square", 0.08); }
 
-  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie };
+  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie, playTone, playTypeTick };
 }
 
 // ─────────────────────────────────────────────
@@ -163,44 +191,103 @@ function spawnParticles(particles: Particle[], x: number, y: number, color: stri
   }
 }
 
-function generateLevel(level: number, scrollX: number): { blocks: Block[]; platforms: Platform[]; enemies: Enemy[] } {
+function makeEnemy(x: number, y: number, vx: number, hp: number, type: "walker" | "jumper" | "flyer"): Enemy {
+  return { x, y, w: 28, h: 28, vx, vy: 0, hp, onGround: false, active: true, type, jumpTimer: Math.floor(Math.random() * 90), sinOffset: Math.random() * Math.PI * 2 };
+}
+
+function generateLevel(level: number, scrollX: number): { blocks: Block[]; platforms: Platform[]; enemies: Enemy[]; ammoCrates: AmmoCrate[] } {
   const blocks: Block[] = [];
   const platforms: Platform[] = [];
   const enemies: Enemy[] = [];
+  const ammoCrates: AmmoCrate[] = [];
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
   const startX = scrollX + CANVAS_W + 100;
 
+  function maybeSpawnCrate(px: number, py: number) {
+    if (Math.random() < 0.33) {
+      ammoCrates.push({ x: px + 30 + Math.random() * 20, y: py - 24, w: 20, h: 20, collected: false });
+    }
+  }
+
   if (level === 1) {
+    // 2 gap chunks + normal platforms
+    const gapPositions = new Set<number>();
+    while (gapPositions.size < 2) gapPositions.add(Math.floor(Math.random() * 10) + 1);
+
+    let curX = startX;
     for (let i = 0; i < 12; i++) {
-      const x = startX + i * 180 + Math.random() * 60;
+      if (gapPositions.has(i)) {
+        curX += 220;
+        continue;
+      }
+      const x = curX + Math.random() * 40;
       const y = GROUND_Y - 60 - Math.random() * 80;
       platforms.push({ x, y, w: 80 + Math.random() * 60, h: 16 });
       if (Math.random() > 0.4) blocks.push({ x: x + 10, y: y - TILE, w: TILE, h: TILE, hp: 2, maxHp: 2, color: pal.block, broken: false });
-      if (Math.random() > 0.6) enemies.push({ x: x + 20, y: y - 32, w: 28, h: 28, vx: -1.2, vy: 0, hp: 2, onGround: false, active: true });
+      enemies.push(makeEnemy(x + 20, y - 32, -1.2, 2, "walker"));
+      maybeSpawnCrate(x, y);
+      curX += 180 + Math.random() * 60;
     }
   } else if (level === 2) {
+    // 1 gauntlet chunk + normal platforms
+    const gauntletPos = 3 + Math.floor(Math.random() * 5);
     for (let i = 0; i < 10; i++) {
       const x = startX + i * 200 + Math.random() * 40;
       const y = GROUND_Y - 80 - Math.random() * 60;
+
+      if (i === gauntletPos) {
+        platforms.push({ x, y, w: 90, h: 16 });
+        enemies.push(makeEnemy(x + 5, y - 32, -1.8, 3, Math.random() > 0.5 ? "jumper" : "walker"));
+        enemies.push(makeEnemy(x + 30, y - 32, -1.8, 3, "jumper"));
+        enemies.push(makeEnemy(x + 55, y - 32, -1.8, 3, Math.random() > 0.5 ? "jumper" : "walker"));
+        maybeSpawnCrate(x, y);
+        continue;
+      }
+
       platforms.push({ x, y, w: 60, h: 16 });
       for (let j = 0; j < 3; j++) blocks.push({ x: x + j * (TILE + 4), y: y - TILE - Math.random() * 32, w: TILE, h: TILE, hp: 3, maxHp: 3, color: pal.block, broken: false });
-      enemies.push({ x: x + 10, y: y - 32, w: 28, h: 28, vx: -1.8, vy: 0, hp: 3, onGround: false, active: true });
+      enemies.push(makeEnemy(x + 10, y - 32, -1.8, 3, Math.random() > 0.5 ? "jumper" : "walker"));
+      maybeSpawnCrate(x, y);
     }
   } else if (level === 3) {
+    // 1 tower chunk + 1 gauntlet chunk + normal platforms
+    const towerPos = 1 + Math.floor(Math.random() * 3);
+    const gauntletPos = 5 + Math.floor(Math.random() * 2);
     for (let i = 0; i < 8; i++) {
       const x = startX + i * 240 + Math.random() * 80;
       const y = GROUND_Y - 50 - Math.random() * 100;
+
+      if (i === towerPos) {
+        platforms.push({ x, y, w: 100, h: 16 });
+        for (let row = 0; row < 3; row++) {
+          blocks.push({ x: x + 30, y: y - TILE * (row + 1), w: TILE, h: TILE, hp: 4, maxHp: 4, color: pal.block, broken: false });
+        }
+        enemies.push(makeEnemy(x, y - 32, -2.5, 4, "flyer"));
+        maybeSpawnCrate(x, y);
+        continue;
+      }
+
+      if (i === gauntletPos) {
+        platforms.push({ x, y, w: 120, h: 16 });
+        enemies.push(makeEnemy(x + 5, y - 32, -2.5, 4, "flyer"));
+        enemies.push(makeEnemy(x + 40, y - 32, -2.5, 4, "flyer"));
+        enemies.push(makeEnemy(x + 75, y - 32, -2.5, 2, "walker"));
+        maybeSpawnCrate(x, y);
+        continue;
+      }
+
       platforms.push({ x, y, w: 100 + Math.random() * 60, h: 16 });
       blocks.push({ x: x + 5, y: y - TILE, w: TILE, h: TILE, hp: 4, maxHp: 4, color: pal.block, broken: false });
       blocks.push({ x: x + 45, y: y - TILE, w: TILE, h: TILE, hp: 4, maxHp: 4, color: pal.block, broken: false });
-      enemies.push({ x: x, y: y - 32, w: 28, h: 28, vx: -2.5, vy: 0, hp: 4, onGround: false, active: true });
-      if (Math.random() > 0.4) enemies.push({ x: x + 80, y: y - 32, w: 28, h: 28, vx: -2.5, vy: 0, hp: 2, onGround: false, active: true });
+      enemies.push(makeEnemy(x, y - 32, -2.5, 4, Math.random() > 0.5 ? "flyer" : "walker"));
+      if (Math.random() > 0.4) enemies.push(makeEnemy(x + 80, y - 32, -2.5, 2, "flyer"));
+      maybeSpawnCrate(x, y);
     }
   } else {
     platforms.push({ x: startX, y: GROUND_Y - 40, w: 600, h: 16 });
   }
 
-  return { blocks, platforms, enemies };
+  return { blocks, platforms, enemies, ammoCrates };
 }
 
 function initGameState(level: number, prevState?: Partial<GameState>): GameState {
@@ -209,7 +296,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     stars.push({ x: Math.random() * CANVAS_W, y: Math.random() * (CANVAS_H / 2), size: Math.random() * 2 + 0.5, twinkle: Math.random() * Math.PI * 2 });
   }
 
-  const { blocks, platforms, enemies } = generateLevel(level, 0);
+  const { blocks, platforms, enemies, ammoCrates } = generateLevel(level, 0);
 
   const bgParticles: Particle[] = [];
   if (level === 3) {
@@ -224,7 +311,8 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     w: 36, h: 36,
     collected: false,
     letter: ["A", "B", "C"][level - 1] ?? "?",
-    spawned: level <= 3,
+    // level 3 golden box spawns only after boss is defeated
+    spawned: level <= 2,
   };
 
   const pedestalSlots: PedestalSlot[] = level === 4
@@ -256,7 +344,9 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
 
     blocks, bullets: [], particles: [], enemies, platforms,
     goldenBox: level <= 3 ? goldenBox : null,
+    ammoCrates,
     stars,
+    boss: null,
 
     pedestalSlots,
     boxesToPlace: [...(prevState?.collectedLetters ?? [])],
@@ -265,6 +355,10 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     keys: {}, shootCooldown: 0,
     levelTransTimer: 0, deathTimer: 0, titleAnimTimer: 0,
     bgParticles,
+
+    shakeTimer: 0,
+    comboCount: 0,
+    comboTimer: 0,
   };
 }
 
@@ -293,15 +387,87 @@ function drawPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, facing:
   ctx.restore();
 }
 
-function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy) {
+function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, tick: number) {
   if (!e.active) return;
   const rx = Math.round(e.x); const ry = Math.round(e.y);
-  ctx.fillStyle = "#6B8E23"; ctx.fillRect(rx, ry + 8, e.w, e.h - 8);
-  ctx.fillStyle = "#556B2F";
-  ctx.beginPath(); ctx.arc(rx + e.w / 2, ry + 10, e.w / 2 - 2, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#FF0000"; ctx.fillRect(rx + 7, ry + 6, 4, 4); ctx.fillRect(rx + 17, ry + 6, 4, 4);
-  ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
-  ctx.fillStyle = "#00FF00"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
+
+  if (e.type === "jumper") {
+    // Purple body with coiled legs
+    ctx.fillStyle = "#7B2FBE"; ctx.fillRect(rx, ry + 6, e.w, e.h - 6);
+    ctx.fillStyle = "#5A1F8A";
+    ctx.beginPath(); ctx.arc(rx + e.w / 2, ry + 8, e.w / 2 - 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#9B4FDE";
+    ctx.fillRect(rx + 4, ry + e.h - 4, 6, 6);
+    ctx.fillRect(rx + e.w - 10, ry + e.h - 4, 6, 6);
+    ctx.fillRect(rx + 4, ry + e.h + 2, 4, 4);
+    ctx.fillRect(rx + e.w - 8, ry + e.h + 2, 4, 4);
+    ctx.fillStyle = "#FF0"; ctx.fillRect(rx + 7, ry + 4, 4, 4); ctx.fillRect(rx + 17, ry + 4, 4, 4);
+    ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
+    ctx.fillStyle = "#CC44FF"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
+  } else if (e.type === "flyer") {
+    // Dark red body with wing shapes
+    ctx.fillStyle = "#8B0000"; ctx.fillRect(rx + 4, ry + 4, e.w - 8, e.h - 8);
+    const wingFlap = Math.sin(tick * 0.3 + e.sinOffset) * 4;
+    ctx.fillStyle = "#CC2222";
+    ctx.fillRect(rx - 10, ry + 6 + wingFlap, 14, 8);
+    ctx.fillRect(rx + e.w - 4, ry + 6 + wingFlap, 14, 8);
+    ctx.fillStyle = "#FF4"; ctx.fillRect(rx + 7, ry + 6, 4, 4); ctx.fillRect(rx + 17, ry + 6, 4, 4);
+    ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
+    ctx.fillStyle = "#FF4444"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
+  } else {
+    // Walker — original green blob
+    ctx.fillStyle = "#6B8E23"; ctx.fillRect(rx, ry + 8, e.w, e.h - 8);
+    ctx.fillStyle = "#556B2F";
+    ctx.beginPath(); ctx.arc(rx + e.w / 2, ry + 10, e.w / 2 - 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#FF0000"; ctx.fillRect(rx + 7, ry + 6, 4, 4); ctx.fillRect(rx + 17, ry + 6, 4, 4);
+    ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
+    ctx.fillStyle = "#00FF00"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
+  }
+}
+
+function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate) {
+  if (c.collected) return;
+  const rx = Math.round(c.x); const ry = Math.round(c.y);
+  ctx.fillStyle = "#FF8C00"; ctx.fillRect(rx, ry, c.w, c.h);
+  ctx.strokeStyle = "#CC5500"; ctx.lineWidth = 2; ctx.strokeRect(rx + 1, ry + 1, c.w - 2, c.h - 2);
+  ctx.fillStyle = "#FFF"; ctx.font = 'bold 12px "Press Start 2P", cursive';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("+", rx + c.w / 2, ry + c.h / 2 + 1);
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
+  if (!boss.active || boss.defeated) return;
+  const rx = Math.round(boss.x); const ry = Math.round(boss.y);
+
+  ctx.fillStyle = "#4A0000"; ctx.fillRect(rx, ry, boss.w, boss.h);
+  ctx.strokeStyle = "#8B0000"; ctx.lineWidth = 3; ctx.strokeRect(rx + 1, ry + 1, boss.w - 2, boss.h - 2);
+
+  ctx.fillStyle = "#8B0000";
+  for (let i = 0; i < 4; i++) {
+    const sx = rx + 6 + i * 12;
+    ctx.beginPath(); ctx.moveTo(sx, ry); ctx.lineTo(sx + 5, ry - 10); ctx.lineTo(sx + 10, ry); ctx.fill();
+  }
+
+  const eyePulse = Math.sin(tick * 0.1) > 0 ? "#FFD700" : "#FF8800";
+  ctx.fillStyle = eyePulse;
+  ctx.fillRect(rx + 10, ry + 12, 10, 10);
+  ctx.fillRect(rx + boss.w - 20, ry + 12, 10, 10);
+  ctx.fillStyle = "#000"; ctx.fillRect(rx + 13, ry + 14, 4, 4); ctx.fillRect(rx + boss.w - 17, ry + 14, 4, 4);
+
+  ctx.fillStyle = "#FF0000"; ctx.fillRect(rx + 12, ry + boss.h - 14, boss.w - 24, 6);
+  ctx.fillStyle = "#FFF";
+  for (let i = 0; i < 4; i++) ctx.fillRect(rx + 14 + i * 8, ry + boss.h - 14, 4, 6);
+
+  const barW = boss.w + 20;
+  const barX = rx - 10;
+  ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 16, barW, 10);
+  const hpPct = boss.hp / boss.maxHp;
+  ctx.fillStyle = hpPct > 0.5 ? "#00CC00" : hpPct > 0.25 ? "#CCCC00" : "#CC0000";
+  ctx.fillRect(barX, ry - 16, barW * hpPct, 10);
+  ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 16, barW, 10);
+  ctx.fillStyle = "#FFF"; ctx.font = '6px "Press Start 2P", cursive'; ctx.textAlign = "center";
+  ctx.fillText("BOSS", barX + barW / 2, ry - 8);
 }
 
 function drawBlock(ctx: CanvasRenderingContext2D, b: Block) {
@@ -416,17 +582,16 @@ function drawPedestal(ctx: CanvasRenderingContext2D, slots: PedestalSlot[], tick
 }
 
 function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: string; timer: number; maxTimer: number }, tick: number) {
-  const t = reveal.timer / reveal.maxTimer; // 1→0 as it fades
-  const fadeIn  = Math.min(1, (reveal.maxTimer - reveal.timer) / 20);  // quick fade-in
-  const fadeOut = t < 0.25 ? t / 0.25 : 1;                             // fade out in last quarter
+  const t = reveal.timer / reveal.maxTimer;
+  const fadeIn  = Math.min(1, (reveal.maxTimer - reveal.timer) / 20);
+  const fadeOut = t < 0.25 ? t / 0.25 : 1;
   const alpha   = fadeIn * fadeOut;
 
-  // letter drifts upward slowly
+
   const drift  = (1 - t) * 60;
   const cx     = CANVAS_W / 2;
   const cy     = CANVAS_H / 2 - 20 - drift;
 
-  // sparkle ring — 12 points orbiting the letter
   for (let i = 0; i < 12; i++) {
     const angle   = (i / 12) * Math.PI * 2 + tick * 0.07;
     const radius  = 56 + Math.sin(tick * 0.1 + i * 0.8) * 10;
@@ -439,7 +604,6 @@ function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: strin
     ctx.fillRect(Math.round(sx - sz / 2), Math.round(sy - sz / 2), Math.round(sz), Math.round(sz));
   }
 
-  // outer glow halo
   ctx.globalAlpha = alpha * 0.18;
   const halo = ctx.createRadialGradient(cx, cy, 20, cx, cy, 80);
   halo.addColorStop(0, "#FFD700");
@@ -449,7 +613,6 @@ function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: strin
   ctx.arc(cx, cy, 80, 0, Math.PI * 2);
   ctx.fill();
 
-  // box
   const pulse  = 1 + 0.06 * Math.sin(tick * 0.12);
   const boxSz  = Math.round(72 * pulse);
   const bx     = Math.round(cx - boxSz / 2);
@@ -467,7 +630,6 @@ function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: strin
   ctx.moveTo(bx, cy); ctx.lineTo(bx + boxSz, cy);
   ctx.stroke();
 
-  // letter
   ctx.fillStyle    = "#8B6914";
   ctx.font         = `${Math.round(36 * pulse)}px "Press Start 2P", cursive`;
   ctx.textAlign    = "center";
@@ -489,7 +651,7 @@ function drawHUDOverlay(ctx: CanvasRenderingContext2D, level: number, scrollX: n
 }
 
 // ─────────────────────────────────────────────
-//  TOUCH CONTROLS OVERLAY — drawn ON the canvas
+//  TOUCH CONTROLS OVERLAY — drawn ON the canvas (kept for non-HTML-overlay path)
 // ─────────────────────────────────────────────
 function drawTouchControls(ctx: CanvasRenderingContext2D, keys: Record<string, boolean>) {
   const buttons = [
@@ -503,7 +665,6 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, keys: Record<string, b
     const pressed = !!keys[key];
     const isShoot = key === "Space";
 
-    // Outer circle for shoot, rounded rect for dpad
     ctx.save();
     ctx.globalAlpha = pressed ? 0.85 : 0.45;
 
@@ -535,7 +696,6 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, keys: Record<string, b
       ctx.lineWidth = 2; ctx.stroke();
     }
 
-    // Label
     ctx.globalAlpha = pressed ? 1.0 : 0.7;
     ctx.fillStyle = "#ffffff";
     const isEmoji = label === "🔫";
@@ -560,11 +720,30 @@ export default function GameCanvas() {
   const animFrameRef = useRef<number>(0);
   const tickRef     = useRef<number>(0);
   const isTouchRef  = useRef<boolean>(false);
+  const winRevealIndexRef = useRef<number>(0);
 
   const [hudData, setHudData] = useState({
     score: 0, level: 1, lives: 3, collectedBoxes: [false, false, false], ammo: 30,
   });
   const [gamePhase, setGamePhase] = useState<"title" | "playing" | "dead" | "levelComplete" | "win">("title");
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [highScore, setHighScore] = useState(0);
+
+  // Load high score on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("pixelrunner_highscore");
+    if (stored) setHighScore(parseInt(stored, 10) || 0);
+  }, []);
+
+  function updateHighScore(score: number) {
+    setHighScore((prev) => {
+      if (score > prev) {
+        localStorage.setItem("pixelrunner_highscore", String(score));
+        return score;
+      }
+      return prev;
+    });
+  }
 
   function ensureAudio() {
     if (!audioRef.current) audioRef.current = createAudio();
@@ -574,11 +753,11 @@ export default function GameCanvas() {
     ensureAudio();
     const gs = initGameState(level, prevState);
     stateRef.current = gs;
+    winRevealIndexRef.current = 0;
     setGamePhase("playing");
     setHudData({ score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo });
   }
 
-  // ── Resolve canvas-space coords from a touch/mouse event ──
   function canvasCoords(clientX: number, clientY: number): { cx: number; cy: number } {
     const canvas = canvasRef.current;
     if (!canvas) return { cx: 0, cy: 0 };
@@ -591,7 +770,6 @@ export default function GameCanvas() {
     };
   }
 
-  // ── Hit-test a touch point against a control zone ──
   function hitZone(cx: number, cy: number, zone: typeof TC.LEFT): boolean {
     return cx >= zone.x && cx <= zone.x + zone.w && cy >= zone.y && cy <= zone.y + zone.h;
   }
@@ -601,11 +779,9 @@ export default function GameCanvas() {
     return Math.sqrt(dx * dx + dy * dy) <= zone.w / 2;
   }
 
-  // ── Map active touches to virtual keys ──
   function syncTouchKeys(touches: TouchList) {
     const gs = stateRef.current;
     if (!gs) return;
-    // Clear all virtual touch keys first
     gs.keys["ArrowLeft"]  = false;
     gs.keys["ArrowRight"] = false;
     gs.keys["ArrowUp"]    = false;
@@ -661,6 +837,7 @@ export default function GameCanvas() {
     function onTouchStart(e: TouchEvent) {
       e.preventDefault();
       isTouchRef.current = true;
+      setIsTouchDevice(true);
       ensureAudio();
       const gs = stateRef.current;
       if (!gs) { startGame(1); return; }
@@ -706,7 +883,7 @@ export default function GameCanvas() {
 
   // ── Mouse click (desktop) ──
   function handleCanvasClick() {
-    if (isTouchRef.current) return; // let touch handler do it on mobile
+    if (isTouchRef.current) return;
     ensureAudio();
     const gs = stateRef.current;
     if (!gs || gs.phase === "title") { startGame(1); return; }
@@ -721,7 +898,6 @@ export default function GameCanvas() {
       return;
     }
     if (gs.phase === "win") { startGame(1); return; }
-    // shoot on click during play
     gs.keys["shoot_click"] = true;
     setTimeout(() => { if (stateRef.current) stateRef.current.keys["shoot_click"] = false; }, 80);
   }
@@ -800,6 +976,12 @@ export default function GameCanvas() {
       audio.playShoot();
     }
 
+    // Combo timer countdown
+    if (gs.comboTimer > 0) {
+      gs.comboTimer--;
+      if (gs.comboTimer <= 0) gs.comboCount = 0;
+    }
+
     gs.bullets.forEach((b) => {
       if (!b.active) return;
       b.x += b.vx;
@@ -816,27 +998,177 @@ export default function GameCanvas() {
         if (!en.active || !b.active) return;
         if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: en.x, y: en.y, w: en.w, h: en.h })) {
           en.hp--; b.active = false;
-          spawnParticles(gs.particles, b.x, b.y, "#6B8E23", 6, 3); gs.score += 30;
-          if (en.hp <= 0) { en.active = false; spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5); gs.score += 100; audio.playEnemyDie(); }
+          spawnParticles(gs.particles, b.x, b.y, "#6B8E23", 6, 3);
+          gs.score += 30;
+          if (en.hp <= 0) {
+            en.active = false;
+            const multiplier = Math.min(Math.max(gs.comboCount, 1), 4);
+            spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5);
+            gs.score += 100 * multiplier;
+            gs.comboCount++; gs.comboTimer = 120;
+            audio.playEnemyDie();
+          }
         }
       });
+      // Boss bullet collision
+      if (gs.boss && gs.boss.active && !gs.boss.defeated && b.active) {
+        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: gs.boss.x, y: gs.boss.y, w: gs.boss.w, h: gs.boss.h })) {
+          gs.boss.hp--; b.active = false;
+          spawnParticles(gs.particles, b.x, b.y, "#CC0000", 6, 3);
+          gs.score += 50;
+          if (gs.boss.hp <= 0) {
+            gs.boss.defeated = true;
+            audio.playLevelUp();
+            spawnParticles(gs.particles, gs.boss.x + gs.boss.w / 2, gs.boss.y + gs.boss.h / 2, "#FFD700", 30, 6);
+          }
+        }
+      }
     });
     gs.bullets = gs.bullets.filter((b) => b.active);
 
     gs.enemies.forEach((en) => {
       if (!en.active) return;
-      en.vy += GRAVITY; en.x += en.vx; en.y += en.vy;
-      if (en.y + en.h >= GROUND_Y) { en.y = GROUND_Y - en.h; en.vy = 0; en.onGround = true; }
-      gs.platforms.forEach((p) => {
-        if (rectsOverlap({ x: en.x, y: en.y, w: en.w, h: en.h }, { x: p.x, y: p.y, w: p.w, h: p.h }) && en.vy >= 0 && en.y + en.h - en.vy <= p.y + 4) {
-          en.y = p.y - en.h; en.vy = 0; en.onGround = true;
+
+      if (en.type === "flyer") {
+        // Flyers ignore gravity, oscillate vertically
+        en.x += en.vx;
+        en.y += Math.sin(tick * 0.05 + en.sinOffset) * 1.2;
+      } else {
+        // Walkers and jumpers obey gravity
+        en.vy += GRAVITY; en.x += en.vx; en.y += en.vy;
+        en.onGround = false;
+        if (en.y + en.h >= GROUND_Y) { en.y = GROUND_Y - en.h; en.vy = 0; en.onGround = true; }
+        gs.platforms.forEach((p) => {
+          if (rectsOverlap({ x: en.x, y: en.y, w: en.w, h: en.h }, { x: p.x, y: p.y, w: p.w, h: p.h }) && en.vy >= 0 && en.y + en.h - en.vy <= p.y + 4) {
+            en.y = p.y - en.h; en.vy = 0; en.onGround = true;
+          }
+        });
+
+        if (en.type === "jumper" && en.onGround) {
+          en.jumpTimer++;
+          if (en.jumpTimer >= 90) { en.vy = -10; en.onGround = false; en.jumpTimer = 0; }
         }
-      });
+      }
+
       if (en.x < 0 || en.x > gs.scrollX + CANVAS_W) en.vx *= -1;
-      if (gs.pInvincible === 0 && rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: en.x, y: en.y, w: en.w, h: en.h })) {
-        gs.lives--; gs.pInvincible = 90; audio.playDeath();
+
+      // Stomp check: player falling and feet near enemy top
+      const playerRect: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
+      const enRect: Rect = { x: en.x, y: en.y, w: en.w, h: en.h };
+      if (gs.pvy > 2 && gs.py + 38 <= en.y + 8 && rectsOverlap(playerRect, enRect)) {
+        en.hp -= 2;
+        gs.pvy = -9;
+        spawnParticles(gs.particles, en.x + en.w / 2, en.y, "#6B8E23", 10, 4);
+        const multiplier = Math.min(Math.max(gs.comboCount, 1), 4);
+        gs.score += 150 * multiplier;
+        gs.comboCount++; gs.comboTimer = 120;
+        if (en.hp <= 0) {
+          en.active = false;
+          spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5);
+          audio.playEnemyDie();
+        } else {
+          audio.playHit();
+        }
+      } else if (gs.pInvincible === 0 && rectsOverlap(playerRect, enRect)) {
+        gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
         spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
-        if (gs.lives <= 0) { gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+        if (gs.lives <= 0) {
+          updateHighScore(gs.score);
+          gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead");
+        }
+      }
+    });
+
+    // Boss update (level 3)
+    if (gs.level === 3 && gs.boss && gs.boss.active && !gs.boss.defeated) {
+      const boss = gs.boss;
+
+      if (boss.hp > 10) boss.phase = 1;
+      else if (boss.hp > 4) boss.phase = 2;
+      else boss.phase = 3;
+
+      boss.vy += GRAVITY;
+      boss.y += boss.vy;
+      if (boss.y + boss.h >= GROUND_Y) { boss.y = GROUND_Y - boss.h; boss.vy = 0; boss.onGround = true; }
+
+      if (boss.phase === 1) {
+        boss.x += boss.vx;
+        if (boss.x < 50) boss.vx = 2;
+        if (boss.x > CANVAS_W - 100) boss.vx = -2;
+      } else if (boss.phase === 2) {
+        boss.chargeTimer++;
+        if (boss.chargeActive) {
+          boss.x += boss.vx;
+          boss.chargeFrames--;
+          if (boss.chargeFrames <= 0) { boss.chargeActive = false; boss.vx = boss.vx > 0 ? 1.5 : -1.5; }
+        } else {
+          boss.x += boss.vx;
+          if (boss.x < 50) boss.vx = 1.5;
+          if (boss.x > CANVAS_W - 100) boss.vx = -1.5;
+          if (boss.chargeTimer >= 120) {
+            boss.chargeTimer = 0;
+            const dir = gs.px > boss.x ? 1 : -1;
+            boss.vx = dir * 5; boss.chargeActive = true; boss.chargeFrames = 40;
+          }
+        }
+      } else {
+        boss.chargeTimer++;
+        boss.jumpTimer++;
+        if (boss.chargeActive) {
+          boss.x += boss.vx;
+          boss.chargeFrames--;
+          if (boss.chargeFrames <= 0) { boss.chargeActive = false; boss.vx = boss.vx > 0 ? 2 : -2; }
+        } else {
+          boss.x += boss.vx;
+          if (boss.x < 50) boss.vx = 2;
+          if (boss.x > CANVAS_W - 100) boss.vx = -2;
+          if (boss.chargeTimer >= 80) {
+            boss.chargeTimer = 0;
+            const dir = gs.px > boss.x ? 1 : -1;
+            boss.vx = dir * 7; boss.chargeActive = true; boss.chargeFrames = 40;
+          }
+        }
+        if (boss.jumpTimer >= 80 && boss.onGround) {
+          boss.vy = -12; boss.onGround = false; boss.jumpTimer = 0;
+        }
+      }
+
+      if (boss.x < 20) boss.x = 20;
+      if (boss.x > CANVAS_W - boss.w - 20) boss.x = CANVAS_W - boss.w - 20;
+
+      // Boss stomp check
+      const bossRect: Rect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+      const playerRectB: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
+      if (gs.pvy > 2 && gs.py + 38 <= boss.y + 8 && rectsOverlap(playerRectB, bossRect)) {
+        boss.hp -= 2;
+        gs.pvy = -9;
+        spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y, "#CC0000", 10, 4);
+        gs.score += 200;
+        if (boss.hp <= 0) {
+          boss.defeated = true;
+          audio.playLevelUp();
+          spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y + boss.h / 2, "#FFD700", 30, 6);
+        } else {
+          audio.playHit();
+        }
+      } else if (gs.pInvincible === 0 && rectsOverlap(playerRectB, bossRect)) {
+        gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+        spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+        if (gs.lives <= 0) {
+          updateHighScore(gs.score);
+          gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead");
+        }
+      }
+    }
+
+    // Ammo crate collection
+    gs.ammoCrates.forEach((c) => {
+      if (c.collected) return;
+      if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: c.x, y: c.y, w: c.w, h: c.h })) {
+        c.collected = true;
+        if (gs.ammo !== Infinity) gs.ammo += 10;
+        spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FF8C00", 8, 3);
+        audio.playCollect();
       }
     });
 
@@ -871,6 +1203,7 @@ export default function GameCanvas() {
               spawnParticles(gs.particles, slot.x, slot.y, "#FFD700", 20, 5);
               audio.playPlace();
               if (gs.pedestalSlots.every((s) => s.filled)) {
+                updateHighScore(gs.score);
                 setTimeout(() => {
                   if (stateRef.current) { stateRef.current.phase = "win"; setGamePhase("win"); audio.playWin(); }
                 }, 600);
@@ -882,13 +1215,19 @@ export default function GameCanvas() {
     }
 
     if (gs.level !== 4) {
+      // Difficulty ramp: scroll speed increases with level progress
+      const progress = Math.min(gs.scrollX / gs.levelLength, 1);
+      gs.scrollSpeed = (SCROLL_SPEEDS[gs.level - 1] ?? 3) + progress * 2.5;
+
       gs.scrollX += gs.scrollSpeed;
       gs.levelProgress = gs.scrollX;
       const drift = gs.scrollSpeed;
-      gs.blocks.forEach((b)   => { b.x -= drift; });
+      gs.blocks.forEach((b)    => { b.x -= drift; });
       gs.platforms.forEach((p) => { p.x -= drift; });
       gs.enemies.forEach((e)   => { e.x -= drift; });
+      gs.ammoCrates.forEach((c) => { c.x -= drift; });
       if (gs.goldenBox) gs.goldenBox.x -= drift;
+      if (gs.boss) gs.boss.x -= drift;
 
       if (gs.px > CANVAS_W - 100) gs.px = CANVAS_W - 100;
 
@@ -898,10 +1237,37 @@ export default function GameCanvas() {
         gs.blocks.push(...chunk.blocks);
         gs.platforms.push(...chunk.platforms);
         gs.enemies.push(...chunk.enemies);
+        gs.ammoCrates.push(...chunk.ammoCrates);
       }
 
-      if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
-        gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
+      if (gs.level === 3) {
+        // Spawn boss near end of level
+        if (gs.boss === null && gs.scrollX > gs.levelLength - 700) {
+          gs.boss = {
+            x: CANVAS_W + 100, y: GROUND_Y - 60,
+            w: 56, h: 56,
+            vx: -2, vy: 0,
+            hp: 16, maxHp: 16,
+            phase: 1,
+            active: true,
+            onGround: false,
+            defeated: false,
+            chargeTimer: 0,
+            jumpTimer: 0,
+            chargeActive: false,
+            chargeFrames: 0,
+          };
+        }
+        // Golden box C only spawns after boss is defeated
+        if (gs.goldenBox && !gs.goldenBox.spawned && gs.boss?.defeated === true) {
+          gs.goldenBox.spawned = true;
+          gs.goldenBox.x = gs.boss.x + 20;
+          gs.goldenBox.y = GROUND_Y - 80;
+        }
+      } else {
+        if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
+          gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
+        }
       }
 
       if (gs.scrollX >= gs.levelLength && gs.goldenBox?.collected) {
@@ -911,6 +1277,7 @@ export default function GameCanvas() {
       gs.blocks    = gs.blocks.filter((b) => b.x > -TILE);
       gs.platforms = gs.platforms.filter((p) => p.x > -200);
       gs.enemies   = gs.enemies.filter((e) => e.x > -100);
+      gs.ammoCrates = gs.ammoCrates.filter((c) => c.x > -50);
     }
 
     if (gs.level === 3) {
@@ -925,12 +1292,18 @@ export default function GameCanvas() {
       if (gs.letterReveal.timer <= 0) gs.letterReveal = null;
     }
 
+    if (gs.shakeTimer > 0) gs.shakeTimer--;
+
+
     gs.particles.forEach((p) => { p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; });
     gs.particles = gs.particles.filter((p) => p.life > 0);
 
     if (gs.py > CANVAS_H + 100) {
       gs.lives--; gs.py = GROUND_Y - 60; gs.pvy = 0;
-      if (gs.lives <= 0) { gs.phase = "dead"; setGamePhase("dead"); audio.playDeath(); }
+      if (gs.lives <= 0) {
+        updateHighScore(gs.score);
+        gs.phase = "dead"; setGamePhase("dead"); audio.playDeath();
+      }
       else { gs.pInvincible = 90; audio.playDeath(); }
     }
 
@@ -944,6 +1317,14 @@ export default function GameCanvas() {
   // ─────────────────────────────────────────────
   function renderGame(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
     ctx.imageSmoothingEnabled = false;
+
+    // Screen shake
+    const shaking = gs.shakeTimer > 0;
+    if (shaking) {
+      ctx.save();
+      ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+    }
+
     drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
 
     if (gs.level === 4) {
@@ -964,7 +1345,9 @@ export default function GameCanvas() {
     gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
     gs.blocks.forEach((b)     => drawBlock(ctx, b));
     if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
-    gs.enemies.forEach((e)    => drawEnemy(ctx, e));
+    gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
+    if (gs.boss)                 drawBoss(ctx, gs.boss, tick);
+    gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
     gs.bullets.forEach((b)    => drawBullet(ctx, b));
     drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
 
@@ -974,6 +1357,20 @@ export default function GameCanvas() {
       ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
     });
     ctx.globalAlpha = 1;
+
+    // Combo display
+    if (gs.comboCount >= 2) {
+      const flash = Math.floor(tick / 8) % 2 === 0;
+      if (flash) {
+        ctx.fillStyle = "#FFD700";
+        ctx.font = '12px "Press Start 2P", cursive';
+        ctx.textAlign = "center";
+        ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 10;
+        ctx.fillText(`COMBO x${gs.comboCount}!`, CANVAS_W / 2, 80);
+        ctx.shadowBlur = 0;
+      }
+    }
+
 
     if (gs.letterReveal) drawLetterReveal(ctx, gs.letterReveal, tick);
 
@@ -992,8 +1389,15 @@ export default function GameCanvas() {
       ctx.textAlign = "center"; ctx.fillText("NO AMMO!", CANVAS_W / 2, 60);
     }
 
-    // Draw on-canvas touch controls (always drawn so they show on mobile)
-    if (isTouchRef.current) drawTouchControls(ctx, gs.keys);
+    // Boss incoming warning
+    if (gs.level === 3 && gs.boss === null && gs.scrollX > gs.levelLength - 900) {
+      if (Math.floor(tick / 20) % 2 === 0) {
+        ctx.fillStyle = "#FF0000"; ctx.font = '10px "Press Start 2P", cursive';
+        ctx.textAlign = "center"; ctx.fillText("!! BOSS INCOMING !!", CANVAS_W / 2, 40);
+      }
+    }
+
+    if (shaking) ctx.restore();
   }
 
   function drawTitleScreen(ctx: CanvasRenderingContext2D, tick: number) {
@@ -1022,6 +1426,12 @@ export default function GameCanvas() {
     }
     ctx.fillStyle = "rgba(255,215,0,0.5)"; ctx.font = '7px "Press Start 2P", cursive';
     ctx.fillText("FIND 3 GOLDEN BOXES — UNCOVER THE SECRET!", CANVAS_W / 2, CANVAS_H - 30);
+    // High score
+    if (highScore > 0) {
+      ctx.fillStyle = "#FFD700"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.textAlign = "center";
+      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 115);
+    }
   }
 
   function drawDeadScreen(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
@@ -1033,8 +1443,12 @@ export default function GameCanvas() {
     ctx.fillText("GAME OVER", CANVAS_W / 2, CANVAS_H / 2 - 50); ctx.shadowBlur = 0;
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
     ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2);
+    if (highScore > 0) {
+      ctx.fillStyle = "#FFA500"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 22);
+    }
     ctx.fillStyle = gs.lives > 0 ? "#aaa" : "#888"; ctx.font = '8px "Press Start 2P", cursive';
-    ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 35);
+    ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 45);
     if (Math.floor(tick / 30) % 2 === 0) {
       ctx.fillStyle = "#FFD700"; ctx.font = '9px "Press Start 2P", cursive';
       ctx.fillText("TAP / SPACE / CLICK TO CONTINUE", CANVAS_W / 2, CANVAS_H - 60);
@@ -1098,14 +1512,31 @@ export default function GameCanvas() {
       ctx.fillStyle = "#8B6914"; ctx.font = '10px "Press Start 2P", cursive';
       ctx.textAlign = "center"; ctx.fillText(["A","B","C"][i], bx + 20, by + 26);
     }
+
+    // Typewriter name reveal
+    const fullName = "Leola Jane Snapp!";
+    const charsToShow = Math.min(fullName.length, Math.floor(Math.max(0, tick - 60) / 6));
+    const displayed = fullName.slice(0, charsToShow);
+    const showCursor = charsToShow < fullName.length;
+
+    // Play tick sound on each new character
+    if (charsToShow > winRevealIndexRef.current) {
+      winRevealIndexRef.current = charsToShow;
+      if (audioRef.current) {
+        audioRef.current.playTypeTick(440 + Math.random() * 200);
+      }
+    }
+
     const pulse = 1 + 0.04 * Math.sin(tick * 0.06);
     ctx.save();
     ctx.translate(CANVAS_W / 2, CANVAS_H / 2 - 30);
     ctx.scale(pulse, pulse);
     ctx.fillStyle = "#FFD700"; ctx.font = '22px "Press Start 2P", cursive';
     ctx.textAlign = "center"; ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 30;
-    ctx.fillText("Leola Jane Snapp!", 0, 0); ctx.shadowBlur = 0;
+    const cursorChar = showCursor ? (Math.floor(tick / 15) % 2 === 0 ? "|" : "") : "";
+    ctx.fillText(displayed + cursorChar, 0, 0); ctx.shadowBlur = 0;
     ctx.restore();
+
     ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = '9px "Press Start 2P", cursive';
     ctx.textAlign = "center";
     ctx.fillText("ALL GOLDEN BOXES PLACED!", CANVAS_W / 2, CANVAS_H / 2 + 30);
@@ -1147,15 +1578,125 @@ export default function GameCanvas() {
             imageRendering: "pixelated",
             width: "100%",
             height: "auto",
-            touchAction: "none",   /* prevents browser scroll/zoom on touch */
+            touchAction: "none",
             cursor: "pointer",
             userSelect: "none",
             WebkitUserSelect: "none",
           }}
         />
+
+        {/* HTML D-pad overlay for touch devices */}
+        {isTouchDevice && gamePhase === "playing" && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: "180px",
+              pointerEvents: "none",
+            }}
+          >
+            {/* Left cluster — D-pad */}
+            <div style={{ position: "absolute", left: "16px", bottom: "10px", pointerEvents: "auto" }}>
+              {/* JUMP */}
+              <button
+                style={{
+                  position: "absolute",
+                  left: "50px",
+                  bottom: "70px",
+                  width: "56px",
+                  height: "56px",
+                  background: "rgba(40,80,200,0.7)",
+                  border: "2px solid rgba(100,150,255,0.8)",
+                  borderRadius: "10px",
+                  color: "#fff",
+                  fontFamily: '"Press Start 2P", cursive',
+                  fontSize: "9px",
+                  cursor: "pointer",
+                  touchAction: "none",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+                onPointerDown={() => { if (stateRef.current) stateRef.current.keys["ArrowUp"] = true; }}
+                onPointerUp={() => { if (stateRef.current) stateRef.current.keys["ArrowUp"] = false; }}
+                onPointerLeave={() => { if (stateRef.current) stateRef.current.keys["ArrowUp"] = false; }}
+              >▲</button>
+              {/* LEFT */}
+              <button
+                style={{
+                  position: "absolute",
+                  left: "0px",
+                  bottom: "10px",
+                  width: "56px",
+                  height: "56px",
+                  background: "rgba(40,80,200,0.7)",
+                  border: "2px solid rgba(100,150,255,0.8)",
+                  borderRadius: "10px",
+                  color: "#fff",
+                  fontFamily: '"Press Start 2P", cursive',
+                  fontSize: "9px",
+                  cursor: "pointer",
+                  touchAction: "none",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+                onPointerDown={() => { if (stateRef.current) stateRef.current.keys["ArrowLeft"] = true; }}
+                onPointerUp={() => { if (stateRef.current) stateRef.current.keys["ArrowLeft"] = false; }}
+                onPointerLeave={() => { if (stateRef.current) stateRef.current.keys["ArrowLeft"] = false; }}
+              >◄</button>
+              {/* RIGHT */}
+              <button
+                style={{
+                  position: "absolute",
+                  left: "110px",
+                  bottom: "10px",
+                  width: "56px",
+                  height: "56px",
+                  background: "rgba(40,80,200,0.7)",
+                  border: "2px solid rgba(100,150,255,0.8)",
+                  borderRadius: "10px",
+                  color: "#fff",
+                  fontFamily: '"Press Start 2P", cursive',
+                  fontSize: "9px",
+                  cursor: "pointer",
+                  touchAction: "none",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+                onPointerDown={() => { if (stateRef.current) stateRef.current.keys["ArrowRight"] = true; }}
+                onPointerUp={() => { if (stateRef.current) stateRef.current.keys["ArrowRight"] = false; }}
+                onPointerLeave={() => { if (stateRef.current) stateRef.current.keys["ArrowRight"] = false; }}
+              >►</button>
+            </div>
+
+            {/* Right cluster — SHOOT */}
+            <div style={{ position: "absolute", right: "24px", bottom: "20px", pointerEvents: "auto" }}>
+              <button
+                style={{
+                  width: "80px",
+                  height: "80px",
+                  background: "rgba(180,30,0,0.75)",
+                  border: "3px solid rgba(255,140,0,0.9)",
+                  borderRadius: "50%",
+                  color: "#fff",
+                  fontFamily: '"Press Start 2P", cursive',
+                  fontSize: "8px",
+                  cursor: "pointer",
+                  touchAction: "none",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+                onPointerDown={() => { if (stateRef.current) stateRef.current.keys["Space"] = true; }}
+                onPointerUp={() => { if (stateRef.current) stateRef.current.keys["Space"] = false; }}
+                onPointerLeave={() => { if (stateRef.current) stateRef.current.keys["Space"] = false; }}
+              >SHOOT</button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {gamePhase === "playing" && !isTouchRef.current && (
+      {gamePhase === "playing" && !isTouchDevice && (
         <div
           className="absolute bottom-2 left-0 w-full text-center pointer-events-none"
           style={{ fontFamily: '"Press Start 2P", cursive', fontSize: "7px", color: "rgba(255,255,255,0.3)" }}
