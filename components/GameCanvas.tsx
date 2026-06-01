@@ -371,17 +371,17 @@ function drawPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, facing:
   ctx.save();
   if (flip) { ctx.translate(Math.round(x) + 24, 0); ctx.scale(-1, 1); ctx.translate(-Math.round(x), 0); }
   const rx = Math.round(x); const ry = Math.round(y);
-  ctx.fillStyle = "#4169E1"; ctx.fillRect(rx + 4, ry + 8, 20, 18);
+  ctx.fillStyle = "#FF69B4"; ctx.fillRect(rx + 4, ry + 8, 20, 18);
   ctx.fillStyle = "#FFDAB9"; ctx.fillRect(rx + 6, ry, 16, 14);
   ctx.fillStyle = "#8B4513"; ctx.fillRect(rx + 6, ry, 16, 5);
   ctx.fillStyle = "#000"; ctx.fillRect(rx + 9, ry + 6, 3, 3); ctx.fillRect(rx + 16, ry + 6, 3, 3);
   ctx.fillStyle = "#FFDAB9"; ctx.fillRect(rx + 22, ry + 10, 10, 6);
   ctx.fillStyle = "#888"; ctx.fillRect(rx + 30, ry + 9, 6, 5);
   const legOff = frame % 2 === 0 ? 0 : 3;
-  ctx.fillStyle = "#1a237e";
+  ctx.fillStyle = "#C71585";
   ctx.fillRect(rx + 5, ry + 24, 9, 14 - legOff);
   ctx.fillRect(rx + 14, ry + 24, 9, 14 + legOff - 3);
-  ctx.fillStyle = "#333";
+  ctx.fillStyle = "#7B0040";
   ctx.fillRect(rx + 4, ry + 36 - legOff, 10, 5);
   ctx.fillRect(rx + 13, ry + 34 + legOff - 3, 10, 5);
   ctx.restore();
@@ -1552,8 +1552,9 @@ export default function GameCanvas() {
       <div
         className="relative"
         style={{
-          width: `${CANVAS_W}px`,
-          maxWidth: "100vw",
+          /* Scale to fit viewport while preserving 16:9 aspect ratio */
+          width: `min(100vw, calc(100vh * ${CANVAS_W / CANVAS_H}))`,
+          aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
           boxShadow: "0 0 40px rgba(255,215,0,0.15), 0 0 80px rgba(0,0,0,0.8)",
           border: "3px solid #333",
         }}
