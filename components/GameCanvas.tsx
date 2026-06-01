@@ -793,6 +793,7 @@ export default function GameCanvas() {
   const tickRef     = useRef<number>(0);
   const isTouchRef  = useRef<boolean>(false);
   const winRevealIndexRef = useRef<number>(0);
+  const titleImgRef = useRef<HTMLImageElement | null>(null);
 
   const [hudData, setHudData] = useState({
     score: 0, level: 1, lives: 3, collectedBoxes: [false, false, false], ammo: 30,
@@ -805,6 +806,12 @@ export default function GameCanvas() {
   useEffect(() => {
     const stored = localStorage.getItem("pixelrunner_highscore");
     if (stored) setHighScore(parseInt(stored, 10) || 0);
+  }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = "/LJS-title.png";
+    img.onload = () => { titleImgRef.current = img; };
   }, []);
 
   function updateHighScore(score: number) {
@@ -1536,36 +1543,31 @@ export default function GameCanvas() {
   }
 
   function drawTitleScreen(ctx: CanvasRenderingContext2D, tick: number) {
-    const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-    grad.addColorStop(0, "#0a0a1a"); grad.addColorStop(1, "#1a0a2e");
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    for (let i = 0; i < 60; i++) {
-      const sx = (i * 137 + 50) % CANVAS_W;
-      const sy = (i * 73 + 20) % (CANVAS_H / 2);
-      const alpha = 0.4 + 0.6 * Math.sin(i + tick * 0.02);
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-      ctx.fillRect(sx, sy, i % 3 === 0 ? 2 : 1, i % 3 === 0 ? 2 : 1);
+    const img = titleImgRef.current;
+    if (img) {
+      ctx.drawImage(img, 0, 0, CANVAS_W, CANVAS_H);
+    } else {
+      // fallback while image loads
+      ctx.fillStyle = "#0a0a1a"; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     }
-    ctx.fillStyle = "#FFD700"; ctx.font = '28px "Press Start 2P", cursive';
-    ctx.textAlign = "center"; ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 20;
-    ctx.fillText("PIXEL RUNNER", CANVAS_W / 2, 130); ctx.shadowBlur = 0;
-    ctx.fillStyle = "#FF8C00"; ctx.font = '11px "Press Start 2P", cursive';
-    ctx.fillText("BLAST & COLLECT", CANVAS_W / 2, 168);
-    drawPlayer(ctx, CANVAS_W / 2 - 16, CANVAS_H / 2 - 10 + Math.sin(tick * 0.05) * 5, 1, Math.floor(tick / 10) % 4, 0);
-    ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = '7px "Press Start 2P", cursive';
-    ctx.fillText("ARROW KEYS / WASD — MOVE & JUMP", CANVAS_W / 2, CANVAS_H / 2 + 70);
-    ctx.fillText("SPACE / CLICK / TOUCH — SHOOT", CANVAS_W / 2, CANVAS_H / 2 + 92);
-    if (Math.floor(tick / 30) % 2 === 0) {
-      ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
-      ctx.fillText("TAP / CLICK / SPACE TO START", CANVAS_W / 2, CANVAS_H - 60);
-    }
-    ctx.fillStyle = "rgba(255,215,0,0.5)"; ctx.font = '7px "Press Start 2P", cursive';
-    ctx.fillText("FIND 3 GOLDEN BOXES — UNCOVER THE SECRET!", CANVAS_W / 2, CANVAS_H - 30);
-    // High score
+
+    // High score overlay (top-left, subtle)
     if (highScore > 0) {
-      ctx.fillStyle = "#FFD700"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(8, 8, 140, 18);
+      ctx.fillStyle = "#FFD700"; ctx.font = '7px "Press Start 2P", cursive';
+      ctx.textAlign = "left";
+      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, 14, 21);
+    }
+
+    // Blinking prompt that pulses over the image's "PRESS START" area
+    if (Math.floor(tick / 35) % 2 === 0) {
+      ctx.fillStyle = "rgba(255,220,0,0.92)";
+      ctx.font = '11px "Press Start 2P", cursive';
       ctx.textAlign = "center";
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 115);
+      ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 12;
+      ctx.fillText("▶  PRESS START  ◀", CANVAS_W / 2, CANVAS_H - 22);
+      ctx.shadowBlur = 0;
     }
   }
 
