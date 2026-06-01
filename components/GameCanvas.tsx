@@ -12,7 +12,7 @@ const GRAVITY = 0.55;
 const JUMP_FORCE = -13;
 const PLAYER_SPEED = 4;
 const BULLET_SPEED = 10;
-const GROUND_Y = CANVAS_H - 80;
+const GROUND_Y = CANVAS_H - 130;
 const TILE = 32;
 
 const SCROLL_SPEEDS = [3, 4.5, 6, 2];
@@ -1624,21 +1624,21 @@ export default function GameCanvas() {
           <div
             style={{
               position: "absolute",
-              bottom: 0,
+              bottom: "3%",
               left: 0,
               right: 0,
-              height: "180px",
+              height: "36%",
               pointerEvents: "none",
             }}
           >
             {/* Left cluster — D-pad */}
-            <div style={{ position: "absolute", left: "16px", bottom: "10px", pointerEvents: "auto" }}>
+            <div style={{ position: "absolute", left: "16px", bottom: "18px", pointerEvents: "auto" }}>
               {/* JUMP */}
               <button
                 style={{
                   position: "absolute",
                   left: "50px",
-                  bottom: "70px",
+                  bottom: "76px",
                   width: "56px",
                   height: "56px",
                   background: "rgba(40,80,200,0.7)",
@@ -1661,7 +1661,7 @@ export default function GameCanvas() {
                 style={{
                   position: "absolute",
                   left: "0px",
-                  bottom: "10px",
+                  bottom: "0px",
                   width: "56px",
                   height: "56px",
                   background: "rgba(40,80,200,0.7)",
@@ -1684,7 +1684,7 @@ export default function GameCanvas() {
                 style={{
                   position: "absolute",
                   left: "110px",
-                  bottom: "10px",
+                  bottom: "0px",
                   width: "56px",
                   height: "56px",
                   background: "rgba(40,80,200,0.7)",
@@ -1705,7 +1705,7 @@ export default function GameCanvas() {
             </div>
 
             {/* Right cluster — SHOOT */}
-            <div style={{ position: "absolute", right: "24px", bottom: "20px", pointerEvents: "auto" }}>
+            <div style={{ position: "absolute", right: "24px", bottom: "18px", pointerEvents: "auto" }}>
               <button
                 style={{
                   width: "80px",
