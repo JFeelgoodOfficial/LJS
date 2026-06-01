@@ -1548,12 +1548,45 @@ export default function GameCanvas() {
   }
 
   return (
-    <div className="relative w-full h-screen flex items-center justify-center bg-pixel-dark overflow-hidden">
+    <div
+      className="relative w-full flex items-center justify-center bg-pixel-dark overflow-hidden"
+      style={{ height: "100dvh" }}
+    >
+      {/* Fullscreen button */}
+      <button
+        onClick={() => {
+          if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen?.().catch(() => {});
+          } else {
+            document.exitFullscreen?.().catch(() => {});
+          }
+        }}
+        style={{
+          position: "fixed",
+          top: "8px",
+          right: "8px",
+          zIndex: 100,
+          background: "rgba(0,0,0,0.55)",
+          border: "1px solid rgba(255,255,255,0.25)",
+          borderRadius: "6px",
+          color: "#fff",
+          fontSize: "16px",
+          width: "36px",
+          height: "36px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          touchAction: "none",
+        }}
+        title="Fullscreen"
+      >⛶</button>
+
       <div
         className="relative"
         style={{
-          /* Scale to fit viewport while preserving 16:9 aspect ratio */
-          width: `min(100vw, calc(100vh * ${CANVAS_W / CANVAS_H}))`,
+          /* fit both width and height, respecting dynamic viewport */
+          width: `min(100vw, calc(100dvh * ${CANVAS_W / CANVAS_H}))`,
           aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
           boxShadow: "0 0 40px rgba(255,215,0,0.15), 0 0 80px rgba(0,0,0,0.8)",
           border: "3px solid #333",
