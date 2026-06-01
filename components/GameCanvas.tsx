@@ -672,7 +672,7 @@ function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
 
 function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null) {
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
-  const gapW = 320;
+  const gapW = 640;
 
   // Draw ground in up to two segments, leaving a gap at the cliff
   const segments: [number, number][] = cliffX !== null
@@ -1145,7 +1145,7 @@ export default function GameCanvas() {
     if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
 
     gs.pOnGround = false;
-    const overCliff = gs.cliffX !== null && gs.px + 16 > gs.cliffX && gs.px + 16 < gs.cliffX + 320;
+    const overCliff = gs.cliffX !== null && gs.px + 16 > gs.cliffX && gs.px + 16 < gs.cliffX + 640;
     if (!overCliff && gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
 
     // Level 4 boss phase: bound player in room, update camera
