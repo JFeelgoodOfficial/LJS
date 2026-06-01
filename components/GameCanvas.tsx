@@ -16,6 +16,7 @@ const GROUND_Y = CANVAS_H - 130;
 const TILE = 32;
 
 const SCROLL_SPEEDS = [3, 4.5, 6, 2];
+const BOSS_ROOM_W = 2400;
 
 const LEVEL_PALETTES = [
   { sky: "#1a1a2e", ground: "#2d5a27", accent: "#4CAF50", block: "#8B4513", trim: "#A0522D" },
@@ -69,6 +70,17 @@ interface Boss {
   jumpTimer: number;
   chargeActive: boolean;
   chargeFrames: number;
+  // Level 4 boss state machine
+  attackType: "idle" | "spray" | "bombs" | "stomp";
+  attackTimer: number;
+  attackCooldown: number;
+  sprayParticles: Array<{x: number; y: number; vx: number; vy: number; life: number; maxLife: number}>;
+  bombs: Array<{x: number; y: number; vx: number; vy: number; landed: boolean; explodeTimer: number; active: boolean}>;
+  stompRising: boolean;
+  stompTargetX: number;
+  stompY: number;
+  stompPasses: number;
+  defeatedTimer: number;
 }
 
 interface GameState {
@@ -125,6 +137,8 @@ interface GameState {
   comboCount: number;
   comboTimer: number;
   cliffX: number | null;
+  l4Phase: "boss" | "pedestal";
+  cameraX: number;
 }
 
 // ─────────────────────────────────────────────
@@ -318,6 +332,11 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       bgParticles.push({ x: Math.random() * CANVAS_W, y: GROUND_Y + Math.random() * 80, vx: (Math.random() - 0.5) * 0.5, vy: -0.5 - Math.random(), life: 60, maxLife: 80, color: "#ff6600", size: 4 + Math.random() * 4 });
     }
   }
+  if (level === 4) {
+    for (let i = 0; i < 30; i++) {
+      bgParticles.push({ x: Math.random() * BOSS_ROOM_W, y: Math.random() * GROUND_Y, vx: (Math.random() - 0.5) * 0.4, vy: -0.3 - Math.random() * 0.5, life: Math.floor(Math.random() * 80), maxLife: 80, color: Math.random() > 0.5 ? "#cc2200" : "#ff4400", size: 3 + Math.random() * 4 });
+    }
+  }
 
   const goldenBox: GoldenBox = {
     x: 2800 + (level - 1) * 200,
@@ -325,8 +344,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     w: 36, h: 36,
     collected: false,
     letter: ["L", "J", "S"][level - 1] ?? "?",
-    // level 3 golden box spawns only after boss is defeated
-    spawned: level <= 2,
+    spawned: false,
   };
 
   const pedestalSlots: PedestalSlot[] = level === 4
@@ -336,6 +354,58 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
         { x: CANVAS_W / 2 + 120, y: GROUND_Y - 80, filled: false, letter: "S" },
       ]
     : [];
+
+  // Level 4 boss room setup
+  let l4Boss: Boss | null = null;
+  let l4AmmoCrates = ammoCrates;
+  let l4WeaponPickups = weaponPickups;
+  let l4Platforms = platforms;
+  if (level === 4) {
+    l4Boss = {
+      x: BOSS_ROOM_W / 2 - 40, y: GROUND_Y - 80,
+      w: 80, h: 80,
+      vx: 1, vy: 0,
+      hp: 10, maxHp: 10,
+      phase: 1,
+      active: true,
+      onGround: true,
+      defeated: false,
+      chargeTimer: 0,
+      jumpTimer: 0,
+      chargeActive: false,
+      chargeFrames: 0,
+      attackType: "idle",
+      attackTimer: 0,
+      attackCooldown: 120 + Math.floor(Math.random() * 60),
+      sprayParticles: [],
+      bombs: [],
+      stompRising: false,
+      stompTargetX: BOSS_ROOM_W / 2,
+      stompY: GROUND_Y - 80,
+      stompPasses: 0,
+      defeatedTimer: 0,
+    };
+    l4AmmoCrates = [
+      { x: 200, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+      { x: 600, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+      { x: 1000, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+      { x: 1400, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+      { x: 1800, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+      { x: 2200, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
+    ];
+    l4WeaponPickups = [
+      { x: 400, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "rapid" },
+      { x: 800, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "double" },
+      { x: 1600, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "big" },
+      { x: 2000, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "pierce" },
+    ];
+    l4Platforms = [
+      { x: 300, y: GROUND_Y - 100, w: 120, h: 16 },
+      { x: 900, y: GROUND_Y - 140, w: 100, h: 16 },
+      { x: 1500, y: GROUND_Y - 110, w: 130, h: 16 },
+      { x: 2100, y: GROUND_Y - 130, w: 110, h: 16 },
+    ];
+  }
 
   return {
     phase: "playing",
@@ -347,7 +417,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     collectedLetters: prevState?.collectedLetters ?? [],
     letterReveal: null,
 
-    px: 80, py: GROUND_Y - 60,
+    px: level === 4 ? 120 : 80, py: GROUND_Y - 60,
     pvx: 0, pvy: 0,
     pOnGround: false, pFacing: 1,
     pFrame: 0, pAnimTimer: 0,
@@ -356,13 +426,14 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     scrollX: 0, scrollSpeed: SCROLL_SPEEDS[level - 1] ?? 3,
     levelProgress: 0, levelLength: level === 4 ? 800 : 3200,
 
-    blocks, bullets: [], particles: [], enemies, platforms,
+    blocks, bullets: [], particles: [], enemies,
+    platforms: level === 4 ? l4Platforms : platforms,
     goldenBox: level <= 3 ? goldenBox : null,
-    ammoCrates,
-    weaponPickups,
+    ammoCrates: level === 4 ? l4AmmoCrates : ammoCrates,
+    weaponPickups: level === 4 ? l4WeaponPickups : weaponPickups,
     activeWeapon: null,
     stars,
-    boss: null,
+    boss: l4Boss,
 
     pedestalSlots,
     boxesToPlace: [...(prevState?.collectedLetters ?? [])],
@@ -376,6 +447,8 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     cliffX: null,
     comboCount: 0,
     comboTimer: 0,
+    l4Phase: level === 4 ? "boss" : "pedestal",
+    cameraX: 0,
   };
 }
 
@@ -479,35 +552,68 @@ function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: 
 function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   if (!boss.active || boss.defeated) return;
   const rx = Math.round(boss.x); const ry = Math.round(boss.y);
+  const isStorming = boss.attackType === "stomp" && !boss.onGround;
+  const isSpray = boss.attackType === "spray";
 
-  ctx.fillStyle = "#4A0000"; ctx.fillRect(rx, ry, boss.w, boss.h);
-  ctx.strokeStyle = "#8B0000"; ctx.lineWidth = 3; ctx.strokeRect(rx + 1, ry + 1, boss.w - 2, boss.h - 2);
-
-  ctx.fillStyle = "#8B0000";
-  for (let i = 0; i < 4; i++) {
-    const sx = rx + 6 + i * 12;
-    ctx.beginPath(); ctx.moveTo(sx, ry); ctx.lineTo(sx + 5, ry - 10); ctx.lineTo(sx + 10, ry); ctx.fill();
+  // Orange glow during spray attack
+  if (isSpray) {
+    const glowAlpha = 0.15 + 0.1 * Math.sin(tick * 0.3);
+    ctx.globalAlpha = glowAlpha;
+    ctx.fillStyle = "#FF8800";
+    ctx.fillRect(rx - 16, ry - 16, boss.w + 32, boss.h + 32);
+    ctx.globalAlpha = 1;
   }
 
-  const eyePulse = Math.sin(tick * 0.1) > 0 ? "#FFD700" : "#FF8800";
-  ctx.fillStyle = eyePulse;
-  ctx.fillRect(rx + 10, ry + 12, 10, 10);
-  ctx.fillRect(rx + boss.w - 20, ry + 12, 10, 10);
-  ctx.fillStyle = "#000"; ctx.fillRect(rx + 13, ry + 14, 4, 4); ctx.fillRect(rx + boss.w - 17, ry + 14, 4, 4);
+  // Wings during stomp/flight
+  if (isStorming) {
+    const wFlap = Math.sin(tick * 0.4) * 10;
+    ctx.fillStyle = "#330033";
+    ctx.fillRect(rx - 30, ry + 10 + wFlap, 30, 16);
+    ctx.fillRect(rx + boss.w, ry + 10 - wFlap, 30, 16);
+    ctx.fillStyle = "#660066";
+    ctx.fillRect(rx - 24, ry + 12 + wFlap, 24, 10);
+    ctx.fillRect(rx + boss.w, ry + 12 - wFlap, 24, 10);
+  }
 
-  ctx.fillStyle = "#FF0000"; ctx.fillRect(rx + 12, ry + boss.h - 14, boss.w - 24, 6);
+  // Main body — dark purple/black
+  ctx.fillStyle = "#1a001a"; ctx.fillRect(rx, ry, boss.w, boss.h);
+  ctx.strokeStyle = "#550055"; ctx.lineWidth = 3; ctx.strokeRect(rx + 1, ry + 1, boss.w - 2, boss.h - 2);
+  // Inner shading
+  ctx.fillStyle = "#2d002d"; ctx.fillRect(rx + 6, ry + 6, boss.w - 12, boss.h - 12);
+
+  // Spiky crown (3 triangles on top)
+  ctx.fillStyle = "#8B0000";
+  const crownPts = [rx + 12, rx + boss.w / 2 - 5, rx + boss.w - 22];
+  crownPts.forEach((cx) => {
+    ctx.beginPath(); ctx.moveTo(cx, ry); ctx.lineTo(cx + 8, ry - 18); ctx.lineTo(cx + 16, ry); ctx.fill();
+  });
+
+  // Glowing red eyes
+  const eyeGlow = Math.sin(tick * 0.12) > 0 ? "#FF0000" : "#CC0000";
+  ctx.fillStyle = eyeGlow;
+  ctx.fillRect(rx + 14, ry + 18, 14, 12);
+  ctx.fillRect(rx + boss.w - 28, ry + 18, 14, 12);
+  ctx.fillStyle = "#000"; ctx.fillRect(rx + 18, ry + 21, 5, 5); ctx.fillRect(rx + boss.w - 24, ry + 21, 5, 5);
+  // Eye glow halo
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = "#FF0000";
+  ctx.fillRect(rx + 10, ry + 14, 22, 20);
+  ctx.fillRect(rx + boss.w - 32, ry + 14, 22, 20);
+  ctx.globalAlpha = 1;
+
+  // Menacing mouth
+  ctx.fillStyle = "#CC0000"; ctx.fillRect(rx + 16, ry + boss.h - 18, boss.w - 32, 8);
   ctx.fillStyle = "#FFF";
-  for (let i = 0; i < 4; i++) ctx.fillRect(rx + 14 + i * 8, ry + boss.h - 14, 4, 6);
+  for (let i = 0; i < 5; i++) ctx.fillRect(rx + 18 + i * 9, ry + boss.h - 18, 5, 8);
 
+  // World-space HP bar above boss
   const barW = boss.w + 20;
   const barX = rx - 10;
-  ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 16, barW, 10);
-  const hpPct = boss.hp / boss.maxHp;
+  ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 18, barW, 10);
+  const hpPct = Math.max(0, boss.hp / boss.maxHp);
   ctx.fillStyle = hpPct > 0.5 ? "#00CC00" : hpPct > 0.25 ? "#CCCC00" : "#CC0000";
-  ctx.fillRect(barX, ry - 16, barW * hpPct, 10);
-  ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 16, barW, 10);
-  ctx.fillStyle = "#FFF"; ctx.font = '6px "Press Start 2P", cursive'; ctx.textAlign = "center";
-  ctx.fillText("BOSS", barX + barW / 2, ry - 8);
+  ctx.fillRect(barX, ry - 18, barW * hpPct, 10);
+  ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 18, barW, 10);
 }
 
 function drawBlock(ctx: CanvasRenderingContext2D, b: Block) {
@@ -618,7 +724,10 @@ function drawSky(ctx: CanvasRenderingContext2D, level: number, stars: Star[], ti
       ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
     });
   }
-  if (level === 4) { ctx.fillStyle = "rgba(255,215,0,0.04)"; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H); }
+  if (level === 4) {
+    // Pedestal room gets a subtle gold tint
+    ctx.fillStyle = "rgba(255,215,0,0.04)"; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
 }
 
 function drawPedestal(ctx: CanvasRenderingContext2D, slots: PedestalSlot[], tick: number) {
@@ -1038,7 +1147,15 @@ export default function GameCanvas() {
     gs.pOnGround = false;
     const overCliff = gs.cliffX !== null && gs.px + 16 > gs.cliffX && gs.px + 16 < gs.cliffX + 320;
     if (!overCliff && gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
-    if (gs.px < 20) gs.px = 20;
+
+    // Level 4 boss phase: bound player in room, update camera
+    if (gs.level === 4 && gs.l4Phase === "boss") {
+      if (gs.px < 20) gs.px = 20;
+      if (gs.px > BOSS_ROOM_W - 40) gs.px = BOSS_ROOM_W - 40;
+      gs.cameraX = Math.max(0, Math.min(gs.px - CANVAS_W / 2, BOSS_ROOM_W - CANVAS_W));
+    } else {
+      if (gs.px < 20) gs.px = 20;
+    }
 
     gs.platforms.forEach((p) => {
       const pRect:   Rect = { x: gs.px + 2, y: gs.py,    w: 28, h: 40 };
@@ -1084,7 +1201,8 @@ export default function GameCanvas() {
     gs.bullets.forEach((b) => {
       if (!b.active) return;
       b.x += b.vx;
-      if (b.x < -20 || b.x > gs.scrollX + CANVAS_W + 20) { b.active = false; return; }
+      const bulletMaxX = gs.level === 4 && gs.l4Phase === "boss" ? BOSS_ROOM_W + 20 : gs.scrollX + CANVAS_W + 20;
+      if (b.x < -20 || b.x > bulletMaxX) { b.active = false; return; }
       const bRect = { x: b.x, y: b.y, w: b.big ? 16 : 10, h: b.big ? 10 : 5 };
       gs.blocks.forEach((bl) => {
         if (bl.broken || !b.active) return;
@@ -1112,16 +1230,19 @@ export default function GameCanvas() {
           }
         }
       });
-      // Boss bullet collision
-      if (gs.boss && gs.boss.active && !gs.boss.defeated && b.active) {
-        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: gs.boss.x, y: gs.boss.y, w: gs.boss.w, h: gs.boss.h })) {
-          gs.boss.hp--; b.active = false;
+      // Boss bullet collision (level 4 only)
+      if (gs.level === 4 && gs.l4Phase === "boss" && gs.boss && gs.boss.active && !gs.boss.defeated && b.active) {
+        const bw = (b as Bullet & { big?: boolean }).big ? 16 : 10;
+        const bh = (b as Bullet & { big?: boolean }).big ? 10 : 5;
+        const dmg = (b as Bullet & { big?: boolean }).big ? 2 : 1;
+        if (rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: gs.boss.x, y: gs.boss.y, w: gs.boss.w, h: gs.boss.h })) {
+          gs.boss.hp -= dmg;
+          if (!(b as Bullet & { pierce?: boolean }).pierce) b.active = false;
           spawnParticles(gs.particles, b.x, b.y, "#CC0000", 6, 3);
           gs.score += 50;
-          if (gs.boss.hp <= 0) {
+          if (gs.boss.hp <= 0 && !gs.boss.defeated) {
             gs.boss.defeated = true;
-            audio.playLevelUp();
-            spawnParticles(gs.particles, gs.boss.x + gs.boss.w / 2, gs.boss.y + gs.boss.h / 2, "#FFD700", 30, 6);
+            gs.boss.defeatedTimer = 0;
           }
         }
       }
@@ -1181,85 +1302,183 @@ export default function GameCanvas() {
       }
     });
 
-    // Boss update (level 3)
-    if (gs.level === 3 && gs.boss && gs.boss.active && !gs.boss.defeated) {
+    // Boss update (level 4 boss phase only)
+    if (gs.level === 4 && gs.l4Phase === "boss" && gs.boss && gs.boss.active && !gs.boss.defeated) {
       const boss = gs.boss;
+      boss.attackTimer++;
 
-      if (boss.hp > 10) boss.phase = 1;
-      else if (boss.hp > 4) boss.phase = 2;
-      else boss.phase = 3;
-
-      boss.vy += GRAVITY;
-      boss.y += boss.vy;
-      if (boss.y + boss.h >= GROUND_Y) { boss.y = GROUND_Y - boss.h; boss.vy = 0; boss.onGround = true; }
-
-      if (boss.phase === 1) {
+      if (boss.attackType === "idle") {
+        // Patrol slowly
         boss.x += boss.vx;
-        if (boss.x < 50) boss.vx = 2;
-        if (boss.x > CANVAS_W - 100) boss.vx = -2;
-      } else if (boss.phase === 2) {
-        boss.chargeTimer++;
-        if (boss.chargeActive) {
-          boss.x += boss.vx;
-          boss.chargeFrames--;
-          if (boss.chargeFrames <= 0) { boss.chargeActive = false; boss.vx = boss.vx > 0 ? 1.5 : -1.5; }
-        } else {
-          boss.x += boss.vx;
-          if (boss.x < 50) boss.vx = 1.5;
-          if (boss.x > CANVAS_W - 100) boss.vx = -1.5;
-          if (boss.chargeTimer >= 120) {
-            boss.chargeTimer = 0;
-            const dir = gs.px > boss.x ? 1 : -1;
-            boss.vx = dir * 5; boss.chargeActive = true; boss.chargeFrames = 40;
+        if (boss.x < 100) boss.vx = 1.2;
+        if (boss.x > BOSS_ROOM_W - 180) boss.vx = -1.2;
+        boss.attackCooldown--;
+        if (boss.attackCooldown <= 0) {
+          const attacks: Array<"spray" | "bombs" | "stomp"> = ["spray", "bombs", "stomp"];
+          boss.attackType = attacks[Math.floor(Math.random() * 3)];
+          boss.attackTimer = 0;
+          boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
+          if (boss.attackType === "stomp") {
+            boss.stompRising = true;
+            boss.stompTargetX = gs.px;
+            boss.stompPasses = 2;
+            boss.stompY = boss.y;
           }
         }
-      } else {
-        boss.chargeTimer++;
-        boss.jumpTimer++;
-        if (boss.chargeActive) {
-          boss.x += boss.vx;
-          boss.chargeFrames--;
-          if (boss.chargeFrames <= 0) { boss.chargeActive = false; boss.vx = boss.vx > 0 ? 2 : -2; }
-        } else {
-          boss.x += boss.vx;
-          if (boss.x < 50) boss.vx = 2;
-          if (boss.x > CANVAS_W - 100) boss.vx = -2;
-          if (boss.chargeTimer >= 80) {
-            boss.chargeTimer = 0;
-            const dir = gs.px > boss.x ? 1 : -1;
-            boss.vx = dir * 7; boss.chargeActive = true; boss.chargeFrames = 40;
+      } else if (boss.attackType === "spray") {
+        // Shoot spray particles toward player
+        if (boss.attackTimer % 3 === 0 && boss.attackTimer < 120) {
+          const count = 4 + Math.floor(Math.random() * 3);
+          const dir = gs.px > boss.x ? 1 : -1;
+          for (let i = 0; i < count; i++) {
+            const speed = 3 + Math.random() * 3;
+            const spreadVy = (Math.random() - 0.5) * 4;
+            boss.sprayParticles.push({
+              x: boss.x + boss.w / 2,
+              y: boss.y + boss.h / 2,
+              vx: dir * speed,
+              vy: spreadVy,
+              life: 80,
+              maxLife: 80,
+            });
           }
         }
-        if (boss.jumpTimer >= 80 && boss.onGround) {
-          boss.vy = -12; boss.onGround = false; boss.jumpTimer = 0;
+        // Move spray particles
+        boss.sprayParticles.forEach((sp) => {
+          sp.x += sp.vx; sp.y += sp.vy; sp.life--;
+        });
+        boss.sprayParticles = boss.sprayParticles.filter((sp) => sp.life > 0);
+        // Collision with player
+        boss.sprayParticles.forEach((sp) => {
+          if (gs.pInvincible === 0 && rectsOverlap({ x: sp.x - 3, y: sp.y - 3, w: 6, h: 6 }, { x: gs.px + 2, y: gs.py, w: 28, h: 40 })) {
+            sp.life = 0;
+            gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+            spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+            if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+          }
+        });
+        if (boss.attackTimer >= 120) {
+          boss.sprayParticles = [];
+          boss.attackType = "idle";
+          boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
+        }
+      } else if (boss.attackType === "bombs") {
+        // Spawn 6 bombs at start
+        if (boss.attackTimer === 1) {
+          for (let i = 0; i < 6; i++) {
+            boss.bombs.push({
+              x: boss.x + boss.w / 2,
+              y: boss.y,
+              vx: (Math.random() - 0.5) * 16,
+              vy: -18 + Math.random() * 6,
+              landed: false,
+              explodeTimer: 0,
+              active: true,
+            });
+          }
+        }
+        // Update bombs
+        boss.bombs.forEach((bomb) => {
+          if (!bomb.active) return;
+          if (!bomb.landed) {
+            bomb.vy += GRAVITY;
+            bomb.x += bomb.vx;
+            bomb.y += bomb.vy;
+            if (bomb.y >= GROUND_Y - 8) {
+              bomb.y = GROUND_Y - 8;
+              bomb.landed = true;
+              bomb.explodeTimer = 45;
+            }
+          } else {
+            bomb.explodeTimer--;
+            if (bomb.explodeTimer <= 0) {
+              bomb.active = false;
+              spawnParticles(gs.particles, bomb.x, bomb.y, "#FF6600", 14, 5);
+              spawnParticles(gs.particles, bomb.x, bomb.y, "#FF4400", 8, 3);
+              const dist = Math.hypot(gs.px + 16 - bomb.x, gs.py + 20 - bomb.y);
+              if (dist < 55 && gs.pInvincible === 0) {
+                gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+                spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+                if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+              }
+            }
+          }
+        });
+        const allDone = boss.bombs.every((b) => !b.active) && boss.attackTimer > 5;
+        if (allDone || boss.attackTimer >= 300) {
+          boss.bombs = [];
+          boss.attackType = "idle";
+          boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
+        }
+      } else if (boss.attackType === "stomp") {
+        if (boss.stompRising) {
+          // Rise to GROUND_Y - 220
+          const targetY = GROUND_Y - 220;
+          boss.y -= 6;
+          boss.stompY = boss.y;
+          if (boss.y <= targetY) {
+            boss.y = targetY;
+            boss.stompRising = false;
+          }
+        } else if (boss.stompPasses > 0) {
+          // Fly across room
+          const dir = boss.vx > 0 ? 1 : -1;
+          boss.x += dir * 7;
+          // Loosely track player x
+          boss.stompTargetX += (gs.px - boss.stompTargetX) * 0.02;
+          if (boss.x < 20) { boss.vx = Math.abs(boss.vx); boss.stompPasses--; }
+          if (boss.x > BOSS_ROOM_W - boss.w - 20) { boss.vx = -Math.abs(boss.vx); boss.stompPasses--; }
+        } else {
+          // Dive down
+          boss.vy = Math.min(boss.vy + 2, 18);
+          boss.y += boss.vy;
+          if (boss.y >= GROUND_Y - boss.h) {
+            boss.y = GROUND_Y - boss.h;
+            boss.vy = 0;
+            boss.onGround = true;
+            gs.shakeTimer = 15;
+            spawnParticles(gs.particles, boss.x + boss.w / 2, GROUND_Y, "#CC4400", 20, 6);
+            // Check if player is within 70px
+            if (Math.abs(gs.px + 16 - (boss.x + boss.w / 2)) < 70 && gs.pInvincible === 0) {
+              gs.lives--; gs.pInvincible = 90; audio.playDeath();
+              spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+              if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+            }
+            boss.attackType = "idle";
+            boss.attackCooldown = 150;
+          }
         }
       }
 
       if (boss.x < 20) boss.x = 20;
-      if (boss.x > CANVAS_W - boss.w - 20) boss.x = CANVAS_W - boss.w - 20;
+      if (boss.x > BOSS_ROOM_W - boss.w - 20) boss.x = BOSS_ROOM_W - boss.w - 20;
 
-      // Boss stomp check
-      const bossRect: Rect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
-      const playerRectB: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
-      if (gs.pvy > 2 && gs.py + 38 <= boss.y + 8 && rectsOverlap(playerRectB, bossRect)) {
-        boss.hp -= 2;
-        gs.pvy = -9;
-        spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y, "#CC0000", 10, 4);
-        gs.score += 200;
-        if (boss.hp <= 0) {
-          boss.defeated = true;
-          audio.playLevelUp();
-          spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y + boss.h / 2, "#FFD700", 30, 6);
-        } else {
-          audio.playHit();
+      // Boss contact damage (only in idle/stomp)
+      if (boss.attackType !== "spray") {
+        const bossRect: Rect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+        const playerRectB: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
+        if (gs.pInvincible === 0 && rectsOverlap(playerRectB, bossRect)) {
+          gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+          spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
+          if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
         }
-      } else if (gs.pInvincible === 0 && rectsOverlap(playerRectB, bossRect)) {
-        gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
-        spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
-        if (gs.lives <= 0) {
-          updateHighScore(gs.score);
-          gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead");
-        }
+      }
+    }
+
+    // Boss defeat transition (level 4)
+    if (gs.level === 4 && gs.l4Phase === "boss" && gs.boss && gs.boss.defeated) {
+      gs.boss.defeatedTimer++;
+      if (gs.boss.defeatedTimer === 1) {
+        spawnParticles(gs.particles, gs.boss.x + gs.boss.w / 2, gs.boss.y + gs.boss.h / 2, "#FFD700", 40, 8);
+        spawnParticles(gs.particles, gs.boss.x + gs.boss.w / 2, gs.boss.y + gs.boss.h / 2, "#FF4400", 30, 6);
+        audio.playLevelUp();
+      }
+      if (gs.boss.defeatedTimer >= 90) {
+        gs.l4Phase = "pedestal";
+        gs.px = CANVAS_W / 2;
+        gs.py = GROUND_Y - 60;
+        gs.pvx = 0; gs.pvy = 0;
+        gs.cameraX = 0;
       }
     }
 
@@ -1301,7 +1520,7 @@ export default function GameCanvas() {
       }
     }
 
-    if (gs.level === 4 && gs.phase === "playing") {
+    if (gs.level === 4 && gs.l4Phase === "pedestal" && gs.phase === "playing") {
       const playerCenterX = gs.px + 16;
       const playerCenterY = gs.py + 20;
       gs.pedestalSlots.forEach((slot) => {
@@ -1356,35 +1575,9 @@ export default function GameCanvas() {
         gs.weaponPickups.push(...chunk.weaponPickups);
       }
 
-      if (gs.level === 3) {
-        // Spawn boss near end of level
-        if (gs.boss === null && gs.scrollX > gs.levelLength - 700) {
-          gs.boss = {
-            x: CANVAS_W + 100, y: GROUND_Y - 60,
-            w: 56, h: 56,
-            vx: -2, vy: 0,
-            hp: 16, maxHp: 16,
-            phase: 1,
-            active: true,
-            onGround: false,
-            defeated: false,
-            chargeTimer: 0,
-            jumpTimer: 0,
-            chargeActive: false,
-            chargeFrames: 0,
-          };
-        }
-        // Golden box C only spawns after boss is defeated
-        if (gs.goldenBox && !gs.goldenBox.spawned && gs.boss?.defeated === true) {
-          gs.goldenBox.spawned = true;
-          gs.goldenBox.x = gs.boss.x + 20;
-          gs.goldenBox.y = GROUND_Y - 80;
-        }
-      } else {
-        if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
-          gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
-          gs.cliffX = CANVAS_W + 400; // cliff starts 200px after the golden box
-        }
+      if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
+        gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
+        if (gs.level !== 3) gs.cliffX = CANVAS_W + 400; // cliff starts 200px after the golden box
       }
 
       if (gs.scrollX >= gs.levelLength && gs.goldenBox?.collected) {
@@ -1402,6 +1595,17 @@ export default function GameCanvas() {
       gs.bgParticles.forEach((p) => {
         p.x += p.vx; p.y += p.vy; p.life--;
         if (p.life <= 0) { p.x = Math.random() * CANVAS_W; p.y = GROUND_Y + Math.random() * 20; p.life = p.maxLife; }
+      });
+    }
+    if (gs.level === 4 && gs.l4Phase === "boss") {
+      gs.bgParticles.forEach((p) => {
+        p.x += p.vx; p.y += p.vy; p.life--;
+        if (p.life <= 0) {
+          p.x = Math.random() * BOSS_ROOM_W;
+          p.y = Math.random() * GROUND_Y;
+          p.life = p.maxLife;
+          p.color = Math.random() > 0.5 ? "#cc2200" : "#ff4400";
+        }
       });
     }
 
@@ -1443,39 +1647,142 @@ export default function GameCanvas() {
       ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
     }
 
-    drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
+    if (gs.level === 4 && gs.l4Phase === "boss") {
+      // Draw dark crimson boss room sky
+      const bossGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      bossGrad.addColorStop(0, "#1a0000");
+      bossGrad.addColorStop(1, "#3d0000");
+      ctx.fillStyle = bossGrad; ctx.fillRect(0, 0, CANVAS_W, GROUND_Y);
+      // Draw ember bg particles (screen-space: offset by camera)
+      gs.bgParticles.forEach((p) => {
+        const sx = p.x - gs.cameraX;
+        if (sx < -10 || sx > CANVAS_W + 10) return;
+        const alpha = (p.life / p.maxLife) * 0.6;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(sx), Math.round(p.y), p.size, p.size);
+      });
+      ctx.globalAlpha = 1;
 
-    if (gs.level === 4) {
-      drawPedestal(ctx, gs.pedestalSlots, tick);
-      const unplaced = gs.pedestalSlots.filter((s) => !s.filled);
-      if (unplaced.length > 0 && gs.boxesToPlace.length > 0) {
-        ctx.fillStyle = "rgba(255,215,0,0.9)";
-        ctx.font = '7px "Press Start 2P", cursive'; ctx.textAlign = "center";
-        ctx.fillText("WALK TO PEDESTAL TO PLACE BOX", CANVAS_W / 2, CANVAS_H - 50);
-        if (gs.placeTimer > 0) {
-          ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120, 8);
-          ctx.fillStyle = "#FFD700"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120 * (gs.placeTimer / 60), 8);
+      // Apply camera transform for world-space objects
+      ctx.save();
+      ctx.translate(-Math.round(gs.cameraX), 0);
+
+      // Draw ground across full room width
+      const palL4 = LEVEL_PALETTES[3];
+      ctx.fillStyle = palL4.ground; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, CANVAS_H - GROUND_Y);
+      ctx.fillStyle = palL4.accent; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, 6);
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      const tileW = 48;
+      for (let tx = 0; tx < BOSS_ROOM_W; tx += tileW) ctx.fillRect(tx, GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+
+      // Platforms
+      gs.platforms.forEach((p) => drawPlatform(ctx, p, 4));
+
+      // Ammo crates and weapon pickups (world space)
+      gs.ammoCrates.forEach((c) => drawAmmoCrate(ctx, c));
+      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
+
+      // Boss
+      if (gs.boss) drawBoss(ctx, gs.boss, tick);
+
+      // Spray particles
+      if (gs.boss) {
+        gs.boss.sprayParticles.forEach((sp) => {
+          const alpha = sp.life / sp.maxLife;
+          ctx.globalAlpha = alpha;
+          const size = 4 + (1 - alpha) * 2;
+          ctx.fillStyle = tick % 4 < 2 ? "#FFD700" : "#FF8800";
+          ctx.fillRect(Math.round(sp.x - size / 2), Math.round(sp.y - size / 2), size, size);
+        });
+        ctx.globalAlpha = 1;
+
+        // Bombs
+        gs.boss.bombs.forEach((bomb) => {
+          if (!bomb.active) return;
+          // fuse flicker
+          const fuseOn = Math.floor(tick / 4) % 2 === 0;
+          ctx.fillStyle = "#222"; ctx.beginPath(); ctx.arc(Math.round(bomb.x), Math.round(bomb.y), 6, 0, Math.PI * 2); ctx.fill();
+          if (!bomb.landed && fuseOn) {
+            ctx.fillStyle = "#FFAA00"; ctx.fillRect(Math.round(bomb.x) - 1, Math.round(bomb.y) - 8, 2, 4);
+          }
+        });
+      }
+
+      // Enemies, bullets, player
+      gs.enemies.forEach((e) => drawEnemy(ctx, e, tick));
+      gs.bullets.forEach((b) => drawBullet(ctx, b));
+      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
+
+      // Particles (world space)
+      gs.particles.forEach((p) => {
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+      });
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
+
+      // HUD: Boss HP bar (screen-space)
+      if (gs.boss && !gs.boss.defeated) {
+        const barW = 300; const barX = CANVAS_W / 2 - barW / 2;
+        ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, 12, barW, 16);
+        const hpPct = Math.max(0, gs.boss.hp / gs.boss.maxHp);
+        ctx.fillStyle = hpPct > 0.5 ? "#00CC00" : hpPct > 0.25 ? "#CCCC00" : "#CC0000";
+        ctx.fillRect(barX, 12, barW * hpPct, 16);
+        ctx.strokeStyle = "#FFD700"; ctx.lineWidth = 2; ctx.strokeRect(barX, 12, barW, 16);
+        ctx.fillStyle = "#FFF"; ctx.font = '7px "Press Start 2P", cursive'; ctx.textAlign = "center";
+        ctx.fillText("BOSS", CANVAS_W / 2, 24);
+
+        // "DEFEAT THE BOSS!" text
+        if (Math.floor(tick / 30) % 2 === 0) {
+          ctx.fillStyle = "#FF4444"; ctx.font = '9px "Press Start 2P", cursive'; ctx.textAlign = "center";
+          ctx.shadowColor = "#FF0000"; ctx.shadowBlur = 8;
+          ctx.fillText("DEFEAT THE BOSS!", CANVAS_W / 2, CANVAS_H - 28);
+          ctx.shadowBlur = 0;
+        }
+      } else if (gs.boss && gs.boss.defeated) {
+        ctx.fillStyle = "#FFD700"; ctx.font = '12px "Press Start 2P", cursive'; ctx.textAlign = "center";
+        ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 15;
+        ctx.fillText("BOSS DEFEATED!", CANVAS_W / 2, CANVAS_H / 2 - 30);
+        ctx.shadowBlur = 0;
+      }
+    } else {
+      // Normal rendering (levels 1-3 and level 4 pedestal)
+      drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
+
+      if (gs.level === 4 && gs.l4Phase === "pedestal") {
+        drawPedestal(ctx, gs.pedestalSlots, tick);
+        const unplaced = gs.pedestalSlots.filter((s) => !s.filled);
+        if (unplaced.length > 0 && gs.boxesToPlace.length > 0) {
+          ctx.fillStyle = "rgba(255,215,0,0.9)";
+          ctx.font = '7px "Press Start 2P", cursive'; ctx.textAlign = "center";
+          ctx.fillText("WALK TO PEDESTAL TO PLACE BOX", CANVAS_W / 2, CANVAS_H - 50);
+          if (gs.placeTimer > 0) {
+            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120, 8);
+            ctx.fillStyle = "#FFD700"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120 * (gs.placeTimer / 60), 8);
+          }
         }
       }
+
+      drawGround(ctx, gs.level, gs.scrollX, gs.cliffX);
+      gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
+      gs.blocks.forEach((b)     => drawBlock(ctx, b));
+      if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
+      gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
+      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
+      gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
+      gs.bullets.forEach((b)    => drawBullet(ctx, b));
+      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
+
+      gs.particles.forEach((p) => {
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+      });
+      ctx.globalAlpha = 1;
     }
-
-    drawGround(ctx, gs.level, gs.scrollX, gs.cliffX);
-    gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
-    gs.blocks.forEach((b)     => drawBlock(ctx, b));
-    if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
-    gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
-    gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
-    if (gs.boss)                 drawBoss(ctx, gs.boss, tick);
-    gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
-    gs.bullets.forEach((b)    => drawBullet(ctx, b));
-    drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
-
-    gs.particles.forEach((p) => {
-      ctx.globalAlpha = p.life / p.maxLife;
-      ctx.fillStyle = p.color;
-      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
-    });
-    ctx.globalAlpha = 1;
 
     // Combo display
     if (gs.comboCount >= 2) {
@@ -1529,14 +1836,6 @@ export default function GameCanvas() {
       // shots count
       ctx.fillStyle = "#fff"; ctx.font = '5px "Press Start 2P", cursive';
       ctx.fillText(`${aw.shotsLeft} shots`, CANVAS_W / 2, barY + 18);
-    }
-
-    // Boss incoming warning
-    if (gs.level === 3 && gs.boss === null && gs.scrollX > gs.levelLength - 900) {
-      if (Math.floor(tick / 20) % 2 === 0) {
-        ctx.fillStyle = "#FF0000"; ctx.font = '10px "Press Start 2P", cursive';
-        ctx.textAlign = "center"; ctx.fillText("!! BOSS INCOMING !!", CANVAS_W / 2, 40);
-      }
     }
 
     if (shaking) ctx.restore();
