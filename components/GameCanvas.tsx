@@ -324,16 +324,16 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     y: GROUND_Y - 60,
     w: 36, h: 36,
     collected: false,
-    letter: ["A", "B", "C"][level - 1] ?? "?",
+    letter: ["L", "J", "S"][level - 1] ?? "?",
     // level 3 golden box spawns only after boss is defeated
     spawned: level <= 2,
   };
 
   const pedestalSlots: PedestalSlot[] = level === 4
     ? [
-        { x: CANVAS_W / 2 - 120, y: GROUND_Y - 80, filled: false, letter: "A" },
-        { x: CANVAS_W / 2,       y: GROUND_Y - 80, filled: false, letter: "B" },
-        { x: CANVAS_W / 2 + 120, y: GROUND_Y - 80, filled: false, letter: "C" },
+        { x: CANVAS_W / 2 - 120, y: GROUND_Y - 80, filled: false, letter: "L" },
+        { x: CANVAS_W / 2,       y: GROUND_Y - 80, filled: false, letter: "J" },
+        { x: CANVAS_W / 2 + 120, y: GROUND_Y - 80, filled: false, letter: "S" },
       ]
     : [];
 
@@ -1282,7 +1282,7 @@ export default function GameCanvas() {
       const gb = gs.goldenBox;
       if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: gb.x, y: gb.y, w: gb.w, h: gb.h })) {
         gb.collected = true;
-        const idx = ["A","B","C"].indexOf(gb.letter);
+        const idx = ["L","J","S"].indexOf(gb.letter);
         if (idx >= 0) {
           gs.collectedBoxes[idx] = true;
           if (!gs.collectedLetters.includes(gb.letter)) gs.collectedLetters.push(gb.letter);
@@ -1608,7 +1608,7 @@ export default function GameCanvas() {
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
     ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, 200);
     ctx.fillStyle = "#aaa"; ctx.font = '8px "Press Start 2P", cursive';
-    ctx.fillText(`GOLDEN BOX [${["A","B","C"][gs.level - 1]}] COLLECTED!`, CANVAS_W / 2, 240);
+    ctx.fillText(`GOLDEN BOX [${["L","J","S"][gs.level - 1]}] COLLECTED!`, CANVAS_W / 2, 240);
     if (gs.collectedBoxes.every(Boolean)) {
       ctx.fillStyle = "#FFD700"; ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 10;
       ctx.fillText("ALL BOXES FOUND! FINAL LEVEL UNLOCKED!", CANVAS_W / 2, 275); ctx.shadowBlur = 0;
@@ -1645,7 +1645,7 @@ export default function GameCanvas() {
       ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(bx+20,by); ctx.lineTo(bx+20,by+40); ctx.moveTo(bx,by+20); ctx.lineTo(bx+40,by+20); ctx.stroke();
       ctx.fillStyle = "#8B6914"; ctx.font = '10px "Press Start 2P", cursive';
-      ctx.textAlign = "center"; ctx.fillText(["A","B","C"][i], bx + 20, by + 26);
+      ctx.textAlign = "center"; ctx.fillText(["L","J","S"][i], bx + 20, by + 26);
     }
 
     // Typewriter name reveal
