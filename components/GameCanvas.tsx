@@ -121,6 +121,7 @@ interface GameState {
   shakeTimer: number;
   comboCount: number;
   comboTimer: number;
+  cliffX: number | null;
 }
 
 // ─────────────────────────────────────────────
@@ -357,6 +358,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     bgParticles,
 
     shakeTimer: 0,
+    cliffX: null,
     comboCount: 0,
     comboTimer: 0,
   };
@@ -516,13 +518,37 @@ function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
   ctx.fillStyle = "#FF8C00"; ctx.fillRect(Math.round(b.x) + 2, Math.round(b.y) + 1, 6, 3);
 }
 
-function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number) {
+function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null) {
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
-  ctx.fillStyle = pal.ground; ctx.fillRect(0, GROUND_Y, CANVAS_W, CANVAS_H - GROUND_Y);
-  ctx.fillStyle = pal.accent; ctx.fillRect(0, GROUND_Y, CANVAS_W, 6);
+  const gapW = 320;
+
+  // Draw ground in up to two segments, leaving a gap at the cliff
+  const segments: [number, number][] = cliffX !== null
+    ? [[0, cliffX], [cliffX + gapW, CANVAS_W]]
+    : [[0, CANVAS_W]];
+
+  segments.forEach(([x0, x1]) => {
+    const w = x1 - x0;
+    if (w <= 0) return;
+    ctx.fillStyle = pal.ground; ctx.fillRect(x0, GROUND_Y, w, CANVAS_H - GROUND_Y);
+    ctx.fillStyle = pal.accent; ctx.fillRect(x0, GROUND_Y, w, 6);
+  });
+
+  // Tile seams
   ctx.fillStyle = "rgba(0,0,0,0.2)";
   const tileW = 48; const offset = scrollX % tileW;
-  for (let tx = -offset; tx < CANVAS_W; tx += tileW) ctx.fillRect(Math.round(tx), GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+  for (let tx = -offset; tx < CANVAS_W; tx += tileW) {
+    // skip seams inside the gap
+    if (cliffX !== null && tx > cliffX && tx < cliffX + gapW) continue;
+    ctx.fillRect(Math.round(tx), GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+  }
+
+  // Cliff edges — draw a dark drop-off on each side of the gap
+  if (cliffX !== null) {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(cliffX - 4, GROUND_Y, 4, CANVAS_H - GROUND_Y);
+    ctx.fillRect(cliffX + gapW, GROUND_Y, 4, CANVAS_H - GROUND_Y);
+  }
 }
 
 function drawSky(ctx: CanvasRenderingContext2D, level: number, stars: Star[], tick: number, bgParticles: Particle[]) {
@@ -957,7 +983,8 @@ export default function GameCanvas() {
     if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
 
     gs.pOnGround = false;
-    if (gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
+    const overCliff = gs.cliffX !== null && gs.px + 16 > gs.cliffX && gs.px + 16 < gs.cliffX + 320;
+    if (!overCliff && gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
     if (gs.px < 20) gs.px = 20;
 
     gs.platforms.forEach((p) => {
@@ -1227,6 +1254,7 @@ export default function GameCanvas() {
       gs.enemies.forEach((e)   => { e.x -= drift; });
       gs.ammoCrates.forEach((c) => { c.x -= drift; });
       if (gs.goldenBox) gs.goldenBox.x -= drift;
+      if (gs.cliffX !== null) gs.cliffX -= drift;
       if (gs.boss) gs.boss.x -= drift;
 
       if (gs.px > CANVAS_W - 100) gs.px = CANVAS_W - 100;
@@ -1267,6 +1295,7 @@ export default function GameCanvas() {
       } else {
         if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
           gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
+          gs.cliffX = CANVAS_W + 400; // cliff starts 200px after the golden box
         }
       }
 
@@ -1341,7 +1370,7 @@ export default function GameCanvas() {
       }
     }
 
-    drawGround(ctx, gs.level, gs.scrollX);
+    drawGround(ctx, gs.level, gs.scrollX, gs.cliffX);
     gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
     gs.blocks.forEach((b)     => drawBlock(ctx, b));
     if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
@@ -1637,8 +1666,8 @@ export default function GameCanvas() {
               <button
                 style={{
                   position: "absolute",
-                  left: "50px",
-                  bottom: "76px",
+                  left: "64px",
+                  bottom: "0px",
                   width: "56px",
                   height: "56px",
                   background: "rgba(40,80,200,0.7)",
@@ -1683,7 +1712,7 @@ export default function GameCanvas() {
               <button
                 style={{
                   position: "absolute",
-                  left: "110px",
+                  left: "128px",
                   bottom: "0px",
                   width: "56px",
                   height: "56px",
