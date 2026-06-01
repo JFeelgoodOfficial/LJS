@@ -1987,7 +1987,13 @@ export default function GameCanvas() {
   return (
     <div
       className="relative w-full flex items-center justify-center bg-pixel-dark overflow-hidden"
-      style={{ height: "100dvh" }}
+      style={{
+        height: "100svh",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
+      }}
     >
       {/* Fullscreen button — hidden on iOS where requestFullscreen is unsupported */}
       {!isIOS && <button
@@ -2022,8 +2028,8 @@ export default function GameCanvas() {
       <div
         className="relative"
         style={{
-          /* fit both width and height, respecting dynamic viewport */
-          width: `min(100vw, calc(100dvh * ${CANVAS_W / CANVAS_H}))`,
+          /* fit canvas within safe-area-aware viewport in both orientations */
+          width: `min(calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right)), calc((100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * ${CANVAS_W / CANVAS_H}))`,
           aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
           boxShadow: "0 0 40px rgba(255,215,0,0.15), 0 0 80px rgba(0,0,0,0.8)",
           border: "3px solid #333",

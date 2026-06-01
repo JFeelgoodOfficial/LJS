@@ -16,7 +16,7 @@ body {
   color: #ffffff;
   font-family: 'Press Start 2P', cursive;
   overflow: hidden;
-  height: 100dvh;
+  height: 100svh;
   width: 100%;
   /* account for notch / home indicator on mobile */
   padding-bottom: env(safe-area-inset-bottom);
