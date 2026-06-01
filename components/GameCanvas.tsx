@@ -57,6 +57,7 @@ interface GameState {
   ammo: number;
   collectedBoxes: boolean[];
   collectedLetters: string[];
+  letterReveal: { letter: string; timer: number; maxTimer: number } | null;
 
   px: number;
   py: number;
@@ -242,6 +243,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     ammo: level === 4 ? Infinity : 30,
     collectedBoxes: prevState?.collectedBoxes ?? [false, false, false],
     collectedLetters: prevState?.collectedLetters ?? [],
+    letterReveal: null,
 
     px: 80, py: GROUND_Y - 60,
     pvx: 0, pvy: 0,
@@ -411,6 +413,69 @@ function drawPedestal(ctx: CanvasRenderingContext2D, slots: PedestalSlot[], tick
       ctx.fillStyle = "rgba(255,215,0,0.1)"; ctx.fillRect(Math.round(s.x) - 18, Math.round(s.y), 36, 36);
     }
   });
+}
+
+function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: string; timer: number; maxTimer: number }, tick: number) {
+  const t = reveal.timer / reveal.maxTimer; // 1→0 as it fades
+  const fadeIn  = Math.min(1, (reveal.maxTimer - reveal.timer) / 20);  // quick fade-in
+  const fadeOut = t < 0.25 ? t / 0.25 : 1;                             // fade out in last quarter
+  const alpha   = fadeIn * fadeOut;
+
+  // letter drifts upward slowly
+  const drift  = (1 - t) * 60;
+  const cx     = CANVAS_W / 2;
+  const cy     = CANVAS_H / 2 - 20 - drift;
+
+  // sparkle ring — 12 points orbiting the letter
+  for (let i = 0; i < 12; i++) {
+    const angle   = (i / 12) * Math.PI * 2 + tick * 0.07;
+    const radius  = 56 + Math.sin(tick * 0.1 + i * 0.8) * 10;
+    const sx      = cx + Math.cos(angle) * radius;
+    const sy      = cy + Math.sin(angle) * radius;
+    const sparkAlpha = alpha * (0.6 + 0.4 * Math.sin(tick * 0.15 + i));
+    ctx.globalAlpha = sparkAlpha;
+    ctx.fillStyle   = i % 3 === 0 ? "#FFFACD" : "#FFD700";
+    const sz = (i % 2 === 0 ? 5 : 3) * (0.8 + 0.2 * Math.sin(tick * 0.2 + i));
+    ctx.fillRect(Math.round(sx - sz / 2), Math.round(sy - sz / 2), Math.round(sz), Math.round(sz));
+  }
+
+  // outer glow halo
+  ctx.globalAlpha = alpha * 0.18;
+  const halo = ctx.createRadialGradient(cx, cy, 20, cx, cy, 80);
+  halo.addColorStop(0, "#FFD700");
+  halo.addColorStop(1, "rgba(255,215,0,0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 80, 0, Math.PI * 2);
+  ctx.fill();
+
+  // box
+  const pulse  = 1 + 0.06 * Math.sin(tick * 0.12);
+  const boxSz  = Math.round(72 * pulse);
+  const bx     = Math.round(cx - boxSz / 2);
+  const by     = Math.round(cy - boxSz / 2);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle   = "#FFD700";
+  ctx.fillRect(bx, by, boxSz, boxSz);
+  ctx.strokeStyle = "#FFA500";
+  ctx.lineWidth   = 4;
+  ctx.strokeRect(bx + 2, by + 2, boxSz - 4, boxSz - 4);
+  ctx.strokeStyle = "#B8860B";
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, by); ctx.lineTo(cx, by + boxSz);
+  ctx.moveTo(bx, cy); ctx.lineTo(bx + boxSz, cy);
+  ctx.stroke();
+
+  // letter
+  ctx.fillStyle    = "#8B6914";
+  ctx.font         = `${Math.round(36 * pulse)}px "Press Start 2P", cursive`;
+  ctx.textAlign    = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(reveal.letter, cx, cy + 2);
+  ctx.textBaseline = "alphabetic";
+
+  ctx.globalAlpha = 1;
 }
 
 function drawHUDOverlay(ctx: CanvasRenderingContext2D, level: number, scrollX: number, levelLength: number) {
@@ -786,6 +851,7 @@ export default function GameCanvas() {
         }
         spawnParticles(gs.particles, gb.x + gb.w / 2, gb.y + gb.h / 2, "#FFD700", 20, 6);
         gs.score += 500; audio.playCollect();
+        gs.letterReveal = { letter: gb.letter, timer: 180, maxTimer: 180 };
         setHudData((prev) => ({ ...prev, collectedBoxes: [...gs.collectedBoxes] }));
       }
     }
@@ -854,6 +920,11 @@ export default function GameCanvas() {
       });
     }
 
+    if (gs.letterReveal) {
+      gs.letterReveal.timer--;
+      if (gs.letterReveal.timer <= 0) gs.letterReveal = null;
+    }
+
     gs.particles.forEach((p) => { p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; });
     gs.particles = gs.particles.filter((p) => p.life > 0);
 
@@ -903,6 +974,8 @@ export default function GameCanvas() {
       ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
     });
     ctx.globalAlpha = 1;
+
+    if (gs.letterReveal) drawLetterReveal(ctx, gs.letterReveal, tick);
 
     if (gs.level !== 4) drawHUDOverlay(ctx, gs.level, gs.scrollX, gs.levelLength);
 
