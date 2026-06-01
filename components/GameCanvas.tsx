@@ -41,10 +41,11 @@ const TC = {
 // ─────────────────────────────────────────────
 interface Rect { x: number; y: number; w: number; h: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; size: number; }
-interface Bullet { x: number; y: number; vx: number; active: boolean; }
+interface Bullet { x: number; y: number; vx: number; active: boolean; big?: boolean; pierce?: boolean; }
 interface Block { x: number; y: number; w: number; h: number; hp: number; maxHp: number; color: string; broken: boolean; }
 interface GoldenBox { x: number; y: number; w: number; h: number; collected: boolean; letter: string; spawned: boolean; }
 interface AmmoCrate { x: number; y: number; w: number; h: number; collected: boolean; }
+interface WeaponPickup { x: number; y: number; w: number; h: number; collected: boolean; type: "rapid" | "double" | "big" | "pierce"; }
 interface Enemy {
   x: number; y: number; w: number; h: number;
   vx: number; vy: number; hp: number;
@@ -103,6 +104,8 @@ interface GameState {
   platforms: Platform[];
   goldenBox: GoldenBox | null;
   ammoCrates: AmmoCrate[];
+  weaponPickups: WeaponPickup[];
+  activeWeapon: { type: "rapid" | "double" | "big" | "pierce"; shotsLeft: number } | null;
   stars: Star[];
   boss: Boss | null;
 
@@ -196,16 +199,26 @@ function makeEnemy(x: number, y: number, vx: number, hp: number, type: "walker" 
   return { x, y, w: 28, h: 28, vx, vy: 0, hp, onGround: false, active: true, type, jumpTimer: Math.floor(Math.random() * 90), sinOffset: Math.random() * Math.PI * 2 };
 }
 
-function generateLevel(level: number, scrollX: number): { blocks: Block[]; platforms: Platform[]; enemies: Enemy[]; ammoCrates: AmmoCrate[] } {
+const WEAPON_TYPES: Array<"rapid" | "double" | "big" | "pierce"> = ["rapid", "double", "big", "pierce"];
+const WEAPON_SHOTS: Record<string, number> = { rapid: 20, double: 12, big: 10, pierce: 8 };
+
+function generateLevel(level: number, scrollX: number): { blocks: Block[]; platforms: Platform[]; enemies: Enemy[]; ammoCrates: AmmoCrate[]; weaponPickups: WeaponPickup[] } {
   const blocks: Block[] = [];
   const platforms: Platform[] = [];
   const enemies: Enemy[] = [];
   const ammoCrates: AmmoCrate[] = [];
+  const weaponPickups: WeaponPickup[] = [];
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
   const startX = scrollX + CANVAS_W + 100;
 
   function maybeSpawnCrate(px: number, py: number) {
-    if (Math.random() < 0.33) {
+    const roll = Math.random();
+    if (roll < 0.15) {
+      // weapon pickup (~15% chance)
+      const type = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      weaponPickups.push({ x: px + 50 + Math.random() * 20, y: py - 26, w: 22, h: 22, collected: false, type });
+    } else if (roll < 0.40) {
+      // ammo crate (~25% chance)
       ammoCrates.push({ x: px + 30 + Math.random() * 20, y: py - 24, w: 20, h: 20, collected: false });
     }
   }
@@ -288,7 +301,7 @@ function generateLevel(level: number, scrollX: number): { blocks: Block[]; platf
     platforms.push({ x: startX, y: GROUND_Y - 40, w: 600, h: 16 });
   }
 
-  return { blocks, platforms, enemies, ammoCrates };
+  return { blocks, platforms, enemies, ammoCrates, weaponPickups };
 }
 
 function initGameState(level: number, prevState?: Partial<GameState>): GameState {
@@ -297,7 +310,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     stars.push({ x: Math.random() * CANVAS_W, y: Math.random() * (CANVAS_H / 2), size: Math.random() * 2 + 0.5, twinkle: Math.random() * Math.PI * 2 });
   }
 
-  const { blocks, platforms, enemies, ammoCrates } = generateLevel(level, 0);
+  const { blocks, platforms, enemies, ammoCrates, weaponPickups } = generateLevel(level, 0);
 
   const bgParticles: Particle[] = [];
   if (level === 3) {
@@ -346,6 +359,8 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     blocks, bullets: [], particles: [], enemies, platforms,
     goldenBox: level <= 3 ? goldenBox : null,
     ammoCrates,
+    weaponPickups,
+    activeWeapon: null,
     stars,
     boss: null,
 
@@ -438,6 +453,29 @@ function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate) {
   ctx.textBaseline = "alphabetic";
 }
 
+const WEAPON_COLORS: Record<string, string> = { rapid: "#00CFFF", double: "#AA44FF", big: "#FF4400", pierce: "#FFD700" };
+const WEAPON_LABELS: Record<string, string> = { rapid: "R", double: "2", big: "B", pierce: "P" };
+
+function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: number) {
+  if (p.collected) return;
+  const bob = Math.sin(tick * 0.07) * 3;
+  const rx = Math.round(p.x); const ry = Math.round(p.y + bob);
+  const col = WEAPON_COLORS[p.type];
+  // glow
+  ctx.globalAlpha = 0.25 + 0.15 * Math.sin(tick * 0.1);
+  ctx.fillStyle = col;
+  ctx.fillRect(rx - 4, ry - 4, p.w + 8, p.h + 8);
+  ctx.globalAlpha = 1;
+  // body
+  ctx.fillStyle = col; ctx.fillRect(rx, ry, p.w, p.h);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(rx + 1, ry + 1, p.w - 2, p.h - 2);
+  // label
+  ctx.fillStyle = "#000"; ctx.font = 'bold 9px "Press Start 2P", cursive';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(WEAPON_LABELS[p.type], rx + p.w / 2, ry + p.h / 2 + 1);
+  ctx.textBaseline = "alphabetic";
+}
+
 function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   if (!boss.active || boss.defeated) return;
   const rx = Math.round(boss.x); const ry = Math.round(boss.y);
@@ -514,8 +552,16 @@ function drawPlatform(ctx: CanvasRenderingContext2D, p: Platform, level: number)
 
 function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
   if (!b.active) return;
-  ctx.fillStyle = "#FFD700"; ctx.fillRect(Math.round(b.x), Math.round(b.y), 10, 5);
-  ctx.fillStyle = "#FF8C00"; ctx.fillRect(Math.round(b.x) + 2, Math.round(b.y) + 1, 6, 3);
+  if (b.big) {
+    ctx.fillStyle = "#FF4400"; ctx.fillRect(Math.round(b.x), Math.round(b.y) - 3, 16, 10);
+    ctx.fillStyle = "#FF8800"; ctx.fillRect(Math.round(b.x) + 2, Math.round(b.y) - 1, 10, 6);
+  } else if (b.pierce) {
+    ctx.fillStyle = "#FFD700"; ctx.fillRect(Math.round(b.x), Math.round(b.y), 14, 4);
+    ctx.fillStyle = "#FFFACD"; ctx.fillRect(Math.round(b.x) + 2, Math.round(b.y) + 1, 8, 2);
+  } else {
+    ctx.fillStyle = "#FFD700"; ctx.fillRect(Math.round(b.x), Math.round(b.y), 10, 5);
+    ctx.fillStyle = "#FF8C00"; ctx.fillRect(Math.round(b.x) + 2, Math.round(b.y) + 1, 6, 3);
+  }
 }
 
 function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null) {
@@ -997,9 +1043,28 @@ export default function GameCanvas() {
 
     if (gs.shootCooldown > 0) gs.shootCooldown--;
     if (shoot && gs.shootCooldown === 0 && gs.ammo > 0) {
-      gs.bullets.push({ x: gs.px + (gs.pFacing > 0 ? 30 : -10), y: gs.py + 12, vx: BULLET_SPEED * gs.pFacing, active: true });
+      const aw = gs.activeWeapon;
+      const cooldown = aw?.type === "rapid" ? 5 : 12;
+      const bx = gs.px + (gs.pFacing > 0 ? 30 : -10);
+      const by = gs.py + 12;
+      const bvx = BULLET_SPEED * gs.pFacing;
+      // spawn bullets based on weapon type
+      if (aw?.type === "double") {
+        gs.bullets.push({ x: bx, y: by - 4, vx: bvx, active: true });
+        gs.bullets.push({ x: bx, y: by + 4, vx: bvx, active: true });
+      } else if (aw?.type === "big") {
+        gs.bullets.push({ x: bx, y: by, vx: bvx, active: true, big: true } as Bullet & { big?: boolean });
+      } else if (aw?.type === "pierce") {
+        gs.bullets.push({ x: bx, y: by, vx: bvx, active: true, pierce: true } as Bullet & { pierce?: boolean });
+      } else {
+        gs.bullets.push({ x: bx, y: by, vx: bvx, active: true });
+      }
       if (gs.ammo !== Infinity) gs.ammo--;
-      gs.shootCooldown = 12;
+      if (aw) {
+        aw.shotsLeft--;
+        if (aw.shotsLeft <= 0) gs.activeWeapon = null;
+      }
+      gs.shootCooldown = cooldown;
       audio.playShoot();
     }
 
@@ -1013,18 +1078,21 @@ export default function GameCanvas() {
       if (!b.active) return;
       b.x += b.vx;
       if (b.x < -20 || b.x > gs.scrollX + CANVAS_W + 20) { b.active = false; return; }
+      const bRect = { x: b.x, y: b.y, w: b.big ? 16 : 10, h: b.big ? 10 : 5 };
       gs.blocks.forEach((bl) => {
         if (bl.broken || !b.active) return;
-        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: bl.x, y: bl.y, w: bl.w, h: bl.h })) {
-          bl.hp--; b.active = false;
+        if (rectsOverlap(bRect, { x: bl.x, y: bl.y, w: bl.w, h: bl.h })) {
+          bl.hp -= b.big ? 2 : 1;
+          if (!b.pierce) b.active = false;
           spawnParticles(gs.particles, b.x, b.y, bl.color, 6, 3); gs.score += 10;
           if (bl.hp <= 0) { bl.broken = true; spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 12, 5); gs.score += 50; audio.playHit(); }
         }
       });
       gs.enemies.forEach((en) => {
         if (!en.active || !b.active) return;
-        if (rectsOverlap({ x: b.x, y: b.y, w: 10, h: 5 }, { x: en.x, y: en.y, w: en.w, h: en.h })) {
-          en.hp--; b.active = false;
+        if (rectsOverlap(bRect, { x: en.x, y: en.y, w: en.w, h: en.h })) {
+          en.hp -= b.big ? 2 : 1;
+          if (!b.pierce) b.active = false;
           spawnParticles(gs.particles, b.x, b.y, "#6B8E23", 6, 3);
           gs.score += 30;
           if (en.hp <= 0) {
@@ -1199,6 +1267,17 @@ export default function GameCanvas() {
       }
     });
 
+    // Weapon pickup collection
+    gs.weaponPickups.forEach((p) => {
+      if (p.collected) return;
+      if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: p.x, y: p.y, w: p.w, h: p.h })) {
+        p.collected = true;
+        gs.activeWeapon = { type: p.type, shotsLeft: WEAPON_SHOTS[p.type] };
+        spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, WEAPON_COLORS[p.type], 12, 4);
+        audio.playCollect();
+      }
+    });
+
     if (gs.goldenBox && gs.goldenBox.spawned && !gs.goldenBox.collected) {
       const gb = gs.goldenBox;
       if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: gb.x, y: gb.y, w: gb.w, h: gb.h })) {
@@ -1253,6 +1332,7 @@ export default function GameCanvas() {
       gs.platforms.forEach((p) => { p.x -= drift; });
       gs.enemies.forEach((e)   => { e.x -= drift; });
       gs.ammoCrates.forEach((c) => { c.x -= drift; });
+      gs.weaponPickups.forEach((p) => { p.x -= drift; });
       if (gs.goldenBox) gs.goldenBox.x -= drift;
       if (gs.cliffX !== null) gs.cliffX -= drift;
       if (gs.boss) gs.boss.x -= drift;
@@ -1266,6 +1346,7 @@ export default function GameCanvas() {
         gs.platforms.push(...chunk.platforms);
         gs.enemies.push(...chunk.enemies);
         gs.ammoCrates.push(...chunk.ammoCrates);
+        gs.weaponPickups.push(...chunk.weaponPickups);
       }
 
       if (gs.level === 3) {
@@ -1307,6 +1388,7 @@ export default function GameCanvas() {
       gs.platforms = gs.platforms.filter((p) => p.x > -200);
       gs.enemies   = gs.enemies.filter((e) => e.x > -100);
       gs.ammoCrates = gs.ammoCrates.filter((c) => c.x > -50);
+      gs.weaponPickups = gs.weaponPickups.filter((p) => p.x > -50);
     }
 
     if (gs.level === 3) {
@@ -1375,6 +1457,7 @@ export default function GameCanvas() {
     gs.blocks.forEach((b)     => drawBlock(ctx, b));
     if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
     gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
+    gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
     if (gs.boss)                 drawBoss(ctx, gs.boss, tick);
     gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
     gs.bullets.forEach((b)    => drawBullet(ctx, b));
@@ -1416,6 +1499,29 @@ export default function GameCanvas() {
     if (typeof gs.ammo === "number" && gs.ammo === 0) {
       ctx.fillStyle = "#FF0000"; ctx.font = '8px "Press Start 2P", cursive';
       ctx.textAlign = "center"; ctx.fillText("NO AMMO!", CANVAS_W / 2, 60);
+    }
+
+    // Active weapon indicator
+    if (gs.activeWeapon) {
+      const aw = gs.activeWeapon;
+      const col = WEAPON_COLORS[aw.type];
+      const label = ({ rapid: "RAPID FIRE", double: "DOUBLE SHOT", big: "BIG SHOT", pierce: "PIERCE" })[aw.type];
+      const maxShots = WEAPON_SHOTS[aw.type];
+      const barW = 80;
+      const barX = CANVAS_W / 2 - barW / 2;
+      const barY = 32;
+      // background pill
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(barX - 6, barY - 14, barW + 12, 26);
+      // label
+      ctx.fillStyle = col; ctx.font = '6px "Press Start 2P", cursive';
+      ctx.textAlign = "center"; ctx.fillText(label, CANVAS_W / 2, barY - 2);
+      // shots bar
+      ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.fillRect(barX, barY + 2, barW, 6);
+      ctx.fillStyle = col; ctx.fillRect(barX, barY + 2, barW * (aw.shotsLeft / maxShots), 6);
+      // shots count
+      ctx.fillStyle = "#fff"; ctx.font = '5px "Press Start 2P", cursive';
+      ctx.fillText(`${aw.shotsLeft} shots`, CANVAS_W / 2, barY + 18);
     }
 
     // Boss incoming warning
