@@ -910,6 +910,7 @@ export default function GameCanvas() {
   const [gamePhase, setGamePhase] = useState<"title" | "playing" | "dead" | "levelComplete" | "win">("title");
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [highScore, setHighScore] = useState(0);
+  const isIOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
 
   // Load high score on mount
   useEffect(() => {
@@ -1988,8 +1989,8 @@ export default function GameCanvas() {
       className="relative w-full flex items-center justify-center bg-pixel-dark overflow-hidden"
       style={{ height: "100dvh" }}
     >
-      {/* Fullscreen button */}
-      <button
+      {/* Fullscreen button — hidden on iOS where requestFullscreen is unsupported */}
+      {!isIOS && <button
         onClick={() => {
           if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen?.().catch(() => {});
@@ -2016,7 +2017,7 @@ export default function GameCanvas() {
           touchAction: "none",
         }}
         title="Fullscreen"
-      >⛶</button>
+      >⛶</button>}
 
       <div
         className="relative"
