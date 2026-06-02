@@ -366,7 +366,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       x: BOSS_ROOM_W / 2 - 40, y: GROUND_Y - 80,
       w: 80, h: 80,
       vx: 1, vy: 0,
-      hp: 10, maxHp: 10,
+      hp: 30, maxHp: 30,
       phase: 1,
       active: true,
       onGround: true,
@@ -552,69 +552,93 @@ function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: 
 
 function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   if (!boss.active || boss.defeated) return;
-  const rx = Math.round(boss.x); const ry = Math.round(boss.y);
+  const phase3 = boss.hp <= 10;
+  const redFlash = phase3 && Math.floor(tick / 6) % 2 === 0;
+  // In phase 3 boss is drawn at 2x size — adjust draw origin so bottom stays on ground
+  const drawW = phase3 ? boss.w * 2 : boss.w;
+  const drawH = phase3 ? boss.h * 2 : boss.h;
+  const rx = Math.round(boss.x) - (phase3 ? boss.w / 2 : 0);
+  const ry = Math.round(boss.y) - (phase3 ? boss.h : 0);
   const isStorming = boss.attackType === "stomp" && !boss.onGround;
   const isSpray = boss.attackType === "spray";
+
+  // Red flash overlay for phase 3
+  if (redFlash) {
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = "#FF0000";
+    ctx.fillRect(rx - 8, ry - 8, drawW + 16, drawH + 16);
+    ctx.globalAlpha = 1;
+  }
 
   // Orange glow during spray attack
   if (isSpray) {
     const glowAlpha = 0.15 + 0.1 * Math.sin(tick * 0.3);
     ctx.globalAlpha = glowAlpha;
     ctx.fillStyle = "#FF8800";
-    ctx.fillRect(rx - 16, ry - 16, boss.w + 32, boss.h + 32);
+    ctx.fillRect(rx - 16, ry - 16, drawW + 32, drawH + 32);
     ctx.globalAlpha = 1;
   }
 
   // Wings during stomp/flight
   if (isStorming) {
     const wFlap = Math.sin(tick * 0.4) * 10;
+    const wingW = phase3 ? 50 : 30;
     ctx.fillStyle = "#330033";
-    ctx.fillRect(rx - 30, ry + 10 + wFlap, 30, 16);
-    ctx.fillRect(rx + boss.w, ry + 10 - wFlap, 30, 16);
+    ctx.fillRect(rx - wingW, ry + 10 + wFlap, wingW, 16);
+    ctx.fillRect(rx + drawW, ry + 10 - wFlap, wingW, 16);
     ctx.fillStyle = "#660066";
-    ctx.fillRect(rx - 24, ry + 12 + wFlap, 24, 10);
-    ctx.fillRect(rx + boss.w, ry + 12 - wFlap, 24, 10);
+    ctx.fillRect(rx - wingW + 6, ry + 12 + wFlap, wingW - 6, 10);
+    ctx.fillRect(rx + drawW, ry + 12 - wFlap, wingW - 6, 10);
   }
 
   // Main body — dark purple/black
-  ctx.fillStyle = "#1a001a"; ctx.fillRect(rx, ry, boss.w, boss.h);
-  ctx.strokeStyle = "#550055"; ctx.lineWidth = 3; ctx.strokeRect(rx + 1, ry + 1, boss.w - 2, boss.h - 2);
+  ctx.fillStyle = "#1a001a"; ctx.fillRect(rx, ry, drawW, drawH);
+  ctx.strokeStyle = phase3 ? "#FF0000" : "#550055"; ctx.lineWidth = 3; ctx.strokeRect(rx + 1, ry + 1, drawW - 2, drawH - 2);
   // Inner shading
-  ctx.fillStyle = "#2d002d"; ctx.fillRect(rx + 6, ry + 6, boss.w - 12, boss.h - 12);
+  ctx.fillStyle = "#2d002d"; ctx.fillRect(rx + 6, ry + 6, drawW - 12, drawH - 12);
 
   // Spiky crown (3 triangles on top)
-  ctx.fillStyle = "#8B0000";
-  const crownPts = [rx + 12, rx + boss.w / 2 - 5, rx + boss.w - 22];
+  ctx.fillStyle = phase3 ? "#FF2200" : "#8B0000";
+  const crownH = phase3 ? 30 : 18;
+  const crownPts = [rx + Math.round(drawW * 0.15), rx + Math.round(drawW / 2) - 5, rx + Math.round(drawW * 0.72)];
   crownPts.forEach((cx) => {
-    ctx.beginPath(); ctx.moveTo(cx, ry); ctx.lineTo(cx + 8, ry - 18); ctx.lineTo(cx + 16, ry); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx, ry); ctx.lineTo(cx + 8, ry - crownH); ctx.lineTo(cx + 16, ry); ctx.fill();
   });
 
-  // Glowing red eyes
+  // Glowing red eyes (scaled)
   const eyeGlow = Math.sin(tick * 0.12) > 0 ? "#FF0000" : "#CC0000";
+  const eyeW = phase3 ? 22 : 14; const eyeH = phase3 ? 18 : 12;
+  const eyePad = Math.round(drawW * 0.17);
   ctx.fillStyle = eyeGlow;
-  ctx.fillRect(rx + 14, ry + 18, 14, 12);
-  ctx.fillRect(rx + boss.w - 28, ry + 18, 14, 12);
-  ctx.fillStyle = "#000"; ctx.fillRect(rx + 18, ry + 21, 5, 5); ctx.fillRect(rx + boss.w - 24, ry + 21, 5, 5);
-  // Eye glow halo
+  ctx.fillRect(rx + eyePad, ry + Math.round(drawH * 0.22), eyeW, eyeH);
+  ctx.fillRect(rx + drawW - eyePad - eyeW, ry + Math.round(drawH * 0.22), eyeW, eyeH);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(rx + eyePad + 4, ry + Math.round(drawH * 0.22) + 3, 6, 6);
+  ctx.fillRect(rx + drawW - eyePad - eyeW + 4, ry + Math.round(drawH * 0.22) + 3, 6, 6);
   ctx.globalAlpha = 0.3;
   ctx.fillStyle = "#FF0000";
-  ctx.fillRect(rx + 10, ry + 14, 22, 20);
-  ctx.fillRect(rx + boss.w - 32, ry + 14, 22, 20);
+  ctx.fillRect(rx + eyePad - 4, ry + Math.round(drawH * 0.22) - 4, eyeW + 8, eyeH + 8);
+  ctx.fillRect(rx + drawW - eyePad - eyeW - 4, ry + Math.round(drawH * 0.22) - 4, eyeW + 8, eyeH + 8);
   ctx.globalAlpha = 1;
 
   // Menacing mouth
-  ctx.fillStyle = "#CC0000"; ctx.fillRect(rx + 16, ry + boss.h - 18, boss.w - 32, 8);
+  const mouthY = ry + drawH - Math.round(drawH * 0.22);
+  ctx.fillStyle = "#CC0000"; ctx.fillRect(rx + Math.round(drawW * 0.2), mouthY, Math.round(drawW * 0.6), 8);
   ctx.fillStyle = "#FFF";
-  for (let i = 0; i < 5; i++) ctx.fillRect(rx + 18 + i * 9, ry + boss.h - 18, 5, 8);
+  for (let i = 0; i < 5; i++) ctx.fillRect(rx + Math.round(drawW * 0.22) + i * Math.round(drawW * 0.12), mouthY, 5, 8);
 
-  // World-space HP bar above boss
-  const barW = boss.w + 20;
+  // HP bar above boss (shows 30 total)
+  const barW = drawW + 20;
   const barX = rx - 10;
-  ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 18, barW, 10);
+  ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 20, barW, 12);
   const hpPct = Math.max(0, boss.hp / boss.maxHp);
-  ctx.fillStyle = hpPct > 0.5 ? "#00CC00" : hpPct > 0.25 ? "#CCCC00" : "#CC0000";
-  ctx.fillRect(barX, ry - 18, barW * hpPct, 10);
-  ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 18, barW, 10);
+  ctx.fillStyle = boss.hp > 20 ? "#00CC00" : boss.hp > 10 ? "#CCCC00" : "#CC0000";
+  ctx.fillRect(barX, ry - 20, barW * hpPct, 12);
+  // Phase markers at 2/3 and 1/3
+  ctx.strokeStyle = "#FFFFFF88"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(barX + barW * (20/30), ry - 20); ctx.lineTo(barX + barW * (20/30), ry - 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(barX + barW * (10/30), ry - 20); ctx.lineTo(barX + barW * (10/30), ry - 8); ctx.stroke();
+  ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 20, barW, 12);
 }
 
 function drawBlock(ctx: CanvasRenderingContext2D, b: Block) {
@@ -1307,7 +1331,12 @@ export default function GameCanvas() {
         const bw = (b as Bullet & { big?: boolean }).big ? 16 : 10;
         const bh = (b as Bullet & { big?: boolean }).big ? 10 : 5;
         const dmg = (b as Bullet & { big?: boolean }).big ? 2 : 1;
-        if (rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: gs.boss.x, y: gs.boss.y, w: gs.boss.w, h: gs.boss.h })) {
+        const phase3Hit = gs.boss.hp <= 10;
+        const hitW = phase3Hit ? gs.boss.w * 2 : gs.boss.w;
+        const hitH = phase3Hit ? gs.boss.h * 2 : gs.boss.h;
+        const hitX = gs.boss.x - (phase3Hit ? gs.boss.w / 2 : 0);
+        const hitY = gs.boss.y - (phase3Hit ? gs.boss.h : 0);
+        if (rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: hitX, y: hitY, w: hitW, h: hitH })) {
           gs.boss.hp -= dmg;
           if (!(b as Bullet & { pierce?: boolean }).pierce) b.active = false;
           spawnParticles(gs.particles, b.x, b.y, "#CC0000", 6, 3);
@@ -1386,8 +1415,10 @@ export default function GameCanvas() {
         if (boss.x > BOSS_ROOM_W - 180) boss.vx = -1.2;
         boss.attackCooldown--;
         if (boss.attackCooldown <= 0) {
-          const attacks: Array<"spray" | "bombs" | "stomp"> = ["spray", "bombs", "stomp"];
-          boss.attackType = attacks[Math.floor(Math.random() * 3)];
+          // Phase 1 (hp 21-30): spray only; Phase 2 (hp 11-20): bombs only; Phase 3 (hp 1-10): stomp only
+          const nextAttack: "spray" | "bombs" | "stomp" =
+            boss.hp > 20 ? "spray" : boss.hp > 10 ? "bombs" : "stomp";
+          boss.attackType = nextAttack;
           boss.attackTimer = 0;
           boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
           if (boss.attackType === "stomp") {
@@ -1527,7 +1558,10 @@ export default function GameCanvas() {
 
       // Boss contact damage (only in idle/stomp)
       if (boss.attackType !== "spray") {
-        const bossRect: Rect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+        const p3c = boss.hp <= 10;
+        const bossRect: Rect = p3c
+          ? { x: boss.x - boss.w / 2, y: boss.y - boss.h, w: boss.w * 2, h: boss.h * 2 }
+          : { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
         const playerRectB: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
         if (gs.pInvincible === 0 && rectsOverlap(playerRectB, bossRect)) {
           gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
