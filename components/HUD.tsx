@@ -9,7 +9,7 @@ interface HUDProps {
 }
 
 export default function HUD({ score, level, lives, collectedBoxes, ammo }: HUDProps) {
-  const letters = ["A", "B", "C"];
+  const letters = ["L", "J", "S"];
 
   return (
     <div
