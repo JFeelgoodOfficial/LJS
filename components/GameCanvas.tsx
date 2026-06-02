@@ -550,9 +550,12 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, tick: number, enemyF
   }
 }
 
-function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate) {
+function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate, tick: number, frames?: (HTMLImageElement | null)[]) {
   if (c.collected) return;
   const rx = Math.round(c.x); const ry = Math.round(c.y);
+  const frameIdx = Math.floor(tick / 6) % 6;
+  const sprite = frames?.[frameIdx] ?? frames?.[0] ?? null;
+  if (sprite) { ctx.drawImage(sprite, rx, ry, c.w, c.h); return; }
   ctx.fillStyle = "#FF8C00"; ctx.fillRect(rx, ry, c.w, c.h);
   ctx.strokeStyle = "#CC5500"; ctx.lineWidth = 2; ctx.strokeRect(rx + 1, ry + 1, c.w - 2, c.h - 2);
   ctx.fillStyle = "#FFF"; ctx.font = 'bold 12px "Press Start 2P", cursive';
@@ -564,20 +567,20 @@ function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate) {
 const WEAPON_COLORS: Record<string, string> = { rapid: "#00CFFF", double: "#AA44FF", big: "#FF4400", pierce: "#FFD700" };
 const WEAPON_LABELS: Record<string, string> = { rapid: "R", double: "2", big: "B", pierce: "P" };
 
-function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: number) {
+function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: number, allFrames?: Record<string, (HTMLImageElement | null)[]>) {
   if (p.collected) return;
   const bob = Math.sin(tick * 0.07) * 3;
   const rx = Math.round(p.x); const ry = Math.round(p.y + bob);
+  const frameIdx = Math.floor(tick / 6) % 6;
+  const frames = allFrames?.[p.type];
+  const sprite = frames?.[frameIdx] ?? frames?.[0] ?? null;
+  if (sprite) { ctx.drawImage(sprite, rx, ry, p.w, p.h); return; }
   const col = WEAPON_COLORS[p.type];
-  // glow
   ctx.globalAlpha = 0.25 + 0.15 * Math.sin(tick * 0.1);
-  ctx.fillStyle = col;
-  ctx.fillRect(rx - 4, ry - 4, p.w + 8, p.h + 8);
+  ctx.fillStyle = col; ctx.fillRect(rx - 4, ry - 4, p.w + 8, p.h + 8);
   ctx.globalAlpha = 1;
-  // body
   ctx.fillStyle = col; ctx.fillRect(rx, ry, p.w, p.h);
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(rx + 1, ry + 1, p.w - 2, p.h - 2);
-  // label
   ctx.fillStyle = "#000"; ctx.font = 'bold 9px "Press Start 2P", cursive';
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(WEAPON_LABELS[p.type], rx + p.w / 2, ry + p.h / 2 + 1);
@@ -675,9 +678,24 @@ function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 20, barW, 12);
 }
 
-function drawBlock(ctx: CanvasRenderingContext2D, b: Block) {
+function drawBlock(ctx: CanvasRenderingContext2D, b: Block, tick: number, frames?: (HTMLImageElement | null)[]) {
   if (b.broken) return;
   const crack = (b.maxHp - b.hp) / b.maxHp;
+  const frameIdx = Math.floor(tick / 8) % 6;
+  const sprite = frames?.[frameIdx] ?? frames?.[0] ?? null;
+  if (sprite) {
+    ctx.globalAlpha = 1 - crack * 0.5;
+    ctx.drawImage(sprite, Math.round(b.x), Math.round(b.y), b.w, b.h);
+    ctx.globalAlpha = 1;
+    if (crack > 0.3) {
+      ctx.strokeStyle = "rgba(0,0,0,0.6)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(b.x + 8, b.y + 4); ctx.lineTo(b.x + 16, b.y + 20); ctx.stroke();
+    }
+    if (crack > 0.6) {
+      ctx.beginPath(); ctx.moveTo(b.x + 20, b.y + 4); ctx.lineTo(b.x + 12, b.y + 28); ctx.stroke();
+    }
+    return;
+  }
   ctx.fillStyle = b.color; ctx.fillRect(Math.round(b.x), Math.round(b.y), b.w, b.h);
   ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
   ctx.strokeRect(Math.round(b.x) + 1, Math.round(b.y) + 1, b.w - 2, b.h - 2);
@@ -1041,6 +1059,13 @@ export default function GameCanvas() {
     jumper: Array(6).fill(null),
     flyer:  Array(6).fill(null),
   });
+  const itemFrameRefs = useRef<Record<string, (HTMLImageElement | null)[]>>({
+    ammo:   Array(6).fill(null),
+    bomb:   Array(6).fill(null),
+    brick:  Array(6).fill(null),
+    rapid:  Array(6).fill(null),
+    pierce: Array(6).fill(null),
+  });
 
   const [hudData, setHudData] = useState({
     score: 0, level: 1, lives: 3, collectedBoxes: [false, false, false], ammo: 30,
@@ -1100,6 +1125,22 @@ export default function GameCanvas() {
         img.src = `/${prefix}${i + 1}.png`;
         const idx = i;
         img.onload = () => { enemyFrameRefs.current[type][idx] = img; };
+      }
+    });
+
+    const itemTypes: Array<[string, string]> = [
+      ["ammo",   "ammo2_idle"],
+      ["bomb",   "bomb_idle"],
+      ["brick",  "brick_idle"],
+      ["rapid",  "speed_idle"],
+      ["pierce", "pierce_idle"],
+    ];
+    itemTypes.forEach(([key, prefix]) => {
+      for (let i = 0; i < 6; i++) {
+        const img = new Image();
+        img.src = `/${prefix}${i + 1}.png`;
+        const idx = i;
+        img.onload = () => { itemFrameRefs.current[key][idx] = img; };
       }
     });
   }, []);
@@ -1892,8 +1933,8 @@ export default function GameCanvas() {
       gs.platforms.forEach((p) => drawPlatform(ctx, p, 4));
 
       // Ammo crates and weapon pickups (world space)
-      gs.ammoCrates.forEach((c) => drawAmmoCrate(ctx, c));
-      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
+      gs.ammoCrates.forEach((c) => drawAmmoCrate(ctx, c, tick, itemFrameRefs.current.ammo));
+      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick, itemFrameRefs.current));
 
       // Boss
       if (gs.boss) drawBoss(ctx, gs.boss, tick);
@@ -1912,9 +1953,14 @@ export default function GameCanvas() {
         // Bombs
         gs.boss.bombs.forEach((bomb) => {
           if (!bomb.active) return;
-          // fuse flicker
           const fuseOn = Math.floor(tick / 4) % 2 === 0;
-          ctx.fillStyle = "#222"; ctx.beginPath(); ctx.arc(Math.round(bomb.x), Math.round(bomb.y), 6, 0, Math.PI * 2); ctx.fill();
+          const bombFrameIdx = Math.floor(tick / 6) % 6;
+          const bombSprite = itemFrameRefs.current.bomb?.[bombFrameIdx] ?? itemFrameRefs.current.bomb?.[0] ?? null;
+          if (bombSprite) {
+            ctx.drawImage(bombSprite, Math.round(bomb.x) - 8, Math.round(bomb.y) - 8, 16, 16);
+          } else {
+            ctx.fillStyle = "#222"; ctx.beginPath(); ctx.arc(Math.round(bomb.x), Math.round(bomb.y), 6, 0, Math.PI * 2); ctx.fill();
+          }
           if (!bomb.landed && fuseOn) {
             ctx.fillStyle = "#FFAA00"; ctx.fillRect(Math.round(bomb.x) - 1, Math.round(bomb.y) - 8, 2, 4);
           }
@@ -1990,10 +2036,10 @@ export default function GameCanvas() {
 
       drawGround(ctx, gs.level, gs.scrollX, gs.cliffX, groundTileRefs.current[gs.level - 1]);
       gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
-      gs.blocks.forEach((b)     => drawBlock(ctx, b));
+      gs.blocks.forEach((b)     => drawBlock(ctx, b, tick, itemFrameRefs.current.brick));
       if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
-      gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
-      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
+      gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c, tick, itemFrameRefs.current.ammo));
+      gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick, itemFrameRefs.current));
       gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick, enemyFrameRefs.current));
       gs.bullets.forEach((b)    => drawBullet(ctx, b));
       drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible, gs.isFiring, runFrameRefs.current, fireFrameRef.current);
