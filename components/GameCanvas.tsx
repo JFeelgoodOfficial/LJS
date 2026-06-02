@@ -125,6 +125,7 @@ interface GameState {
   boxesToPlace: string[];
   placingIndex: number;
   placeTimer: number;
+  nameRevealTimer: number;
 
   keys: Record<string, boolean>;
   shootCooldown: number;
@@ -437,7 +438,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
 
     pedestalSlots,
     boxesToPlace: [...(prevState?.collectedLetters ?? [])],
-    placingIndex: 0, placeTimer: 0,
+    placingIndex: 0, placeTimer: 0, nameRevealTimer: 0,
 
     keys: {}, shootCooldown: 0,
     levelTransTimer: 0, deathTimer: 0, titleAnimTimer: 0,
@@ -821,6 +822,56 @@ function drawLetterReveal(ctx: CanvasRenderingContext2D, reveal: { letter: strin
   ctx.globalAlpha = 1;
 }
 
+function drawNameBanner(ctx: CanvasRenderingContext2D, timer: number, tick: number) {
+  const maxTimer = 240;
+  const t = timer / maxTimer;
+  // Slide in from top, hold, fade out at end
+  const slideIn = Math.min(1, (maxTimer - timer) / 30);
+  const fadeOut = t < 0.15 ? t / 0.15 : 1;
+  const alpha = slideIn * fadeOut;
+  const slideY = (1 - slideIn) * -80;
+
+  const cx = CANVAS_W / 2;
+  const cy = CANVAS_H / 2 + slideY;
+
+  // Sparkle particles around banner
+  for (let i = 0; i < 20; i++) {
+    const angle = (i / 20) * Math.PI * 2 + tick * 0.05;
+    const r = 90 + Math.sin(tick * 0.1 + i * 1.3) * 14;
+    const sx = cx + Math.cos(angle) * r;
+    const sy = cy + Math.sin(angle) * r * 0.35;
+    ctx.globalAlpha = alpha * (0.5 + 0.5 * Math.sin(tick * 0.18 + i));
+    ctx.fillStyle = i % 2 === 0 ? "#FFD700" : "#FFFFFF";
+    const sz = i % 3 === 0 ? 5 : 3;
+    ctx.fillRect(Math.round(sx - sz / 2), Math.round(sy - sz / 2), sz, sz);
+  }
+
+  // Banner background
+  ctx.globalAlpha = alpha * 0.88;
+  ctx.fillStyle = "#1a0a00";
+  ctx.fillRect(cx - 160, cy - 36, 320, 72);
+  ctx.strokeStyle = "#FFD700";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(cx - 160, cy - 36, 320, 72);
+  ctx.strokeStyle = "#FFA500";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - 155, cy - 31, 310, 62);
+
+  // Name text
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = "center";
+  ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 18;
+  ctx.fillStyle = "#FFD700";
+  ctx.font = '14px "Press Start 2P", cursive';
+  ctx.fillText("LEOLA JANE", cx, cy - 6);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = '14px "Press Start 2P", cursive';
+  ctx.fillText("SNAPP", cx, cy + 18);
+  ctx.shadowBlur = 0;
+
+  ctx.globalAlpha = 1;
+}
+
 function drawHUDOverlay(ctx: CanvasRenderingContext2D, level: number, scrollX: number, levelLength: number) {
   const pct = Math.min(scrollX / levelLength, 1);
   const barW = 200; const barX = CANVAS_W / 2 - barW / 2;
@@ -1165,6 +1216,26 @@ export default function GameCanvas() {
         gs.py = p.y - 40; gs.pvy = 0; gs.pOnGround = true;
       }
     });
+
+    // Pedestal box collision — landing on top fills the box and reveals the letter
+    if (gs.level === 4 && gs.l4Phase === "pedestal") {
+      gs.pedestalSlots.forEach((slot) => {
+        const boxTop = GROUND_Y - 90;
+        const boxRect: Rect = { x: slot.x - 20, y: boxTop, w: 40, h: 60 };
+        const pRect: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
+        if (rectsOverlap(pRect, boxRect) && gs.pvy >= 0 && gs.py + 40 - gs.pvy <= boxTop + 4) {
+          gs.py = boxTop - 40; gs.pvy = 0; gs.pOnGround = true;
+          if (!slot.filled) {
+            slot.filled = true;
+            spawnParticles(gs.particles, slot.x, slot.y, "#FFD700", 30, 6);
+            audio.playPlace();
+            if (gs.pedestalSlots.every((s) => s.filled)) {
+              gs.nameRevealTimer = 240; // 4 second banner
+            }
+          }
+        }
+      });
+    }
 
     if (gs.shootCooldown > 0) gs.shootCooldown--;
     if (shoot && gs.shootCooldown === 0 && gs.ammo > 0) {
@@ -1522,29 +1593,13 @@ export default function GameCanvas() {
     }
 
     if (gs.level === 4 && gs.l4Phase === "pedestal" && gs.phase === "playing") {
-      const playerCenterX = gs.px + 16;
-      const playerCenterY = gs.py + 20;
-      gs.pedestalSlots.forEach((slot) => {
-        if (!slot.filled && gs.boxesToPlace.includes(slot.letter)) {
-          const dist = Math.hypot(playerCenterX - slot.x, playerCenterY - (slot.y + 18));
-          if (dist < 60 && gs.pOnGround) {
-            gs.placeTimer++;
-            if (gs.placeTimer > 60) {
-              slot.filled = true;
-              gs.boxesToPlace = gs.boxesToPlace.filter((l) => l !== slot.letter);
-              gs.placeTimer = 0;
-              spawnParticles(gs.particles, slot.x, slot.y, "#FFD700", 20, 5);
-              audio.playPlace();
-              if (gs.pedestalSlots.every((s) => s.filled)) {
-                updateHighScore(gs.score);
-                setTimeout(() => {
-                  if (stateRef.current) { stateRef.current.phase = "win"; setGamePhase("win"); audio.playWin(); }
-                }, 600);
-              }
-            }
-          } else { gs.placeTimer = 0; }
+      if (gs.nameRevealTimer > 0) {
+        gs.nameRevealTimer--;
+        if (gs.nameRevealTimer === 0) {
+          updateHighScore(gs.score);
+          gs.phase = "win"; setGamePhase("win"); audio.playWin();
         }
-      });
+      }
     }
 
     if (gs.level !== 4) {
@@ -1756,14 +1811,13 @@ export default function GameCanvas() {
       if (gs.level === 4 && gs.l4Phase === "pedestal") {
         drawPedestal(ctx, gs.pedestalSlots, tick);
         const unplaced = gs.pedestalSlots.filter((s) => !s.filled);
-        if (unplaced.length > 0 && gs.boxesToPlace.length > 0) {
+        if (unplaced.length > 0 && gs.nameRevealTimer === 0) {
           ctx.fillStyle = "rgba(255,215,0,0.9)";
           ctx.font = '7px "Press Start 2P", cursive'; ctx.textAlign = "center";
-          ctx.fillText("WALK TO PEDESTAL TO PLACE BOX", CANVAS_W / 2, CANVAS_H - 50);
-          if (gs.placeTimer > 0) {
-            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120, 8);
-            ctx.fillStyle = "#FFD700"; ctx.fillRect(CANVAS_W / 2 - 60, CANVAS_H - 38, 120 * (gs.placeTimer / 60), 8);
-          }
+          ctx.fillText("JUMP ON EACH BOX!", CANVAS_W / 2, CANVAS_H - 50);
+        }
+        if (gs.nameRevealTimer > 0) {
+          drawNameBanner(ctx, gs.nameRevealTimer, tick);
         }
       }
 
