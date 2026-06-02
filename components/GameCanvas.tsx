@@ -497,35 +497,50 @@ function drawPlayer(
   ctx.restore();
 }
 
-function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, tick: number) {
+function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, tick: number, enemyFrames?: Record<string, (HTMLImageElement | null)[]>) {
   if (!e.active) return;
   const rx = Math.round(e.x); const ry = Math.round(e.y);
+  const frameIdx = Math.floor(tick / 6) % 6;
+  const frames = enemyFrames?.[e.type];
+  const sprite = frames?.[frameIdx] ?? frames?.[0] ?? null;
 
+  // Flip sprite to face movement direction (enemies move left by default)
+  const facingLeft = e.vx <= 0;
+
+  if (sprite) {
+    ctx.save();
+    if (!facingLeft) {
+      ctx.translate(rx + e.w, 0); ctx.scale(-1, 1); ctx.translate(-rx, 0);
+    }
+    ctx.drawImage(sprite, rx, ry, e.w, e.h);
+    ctx.restore();
+    // HP bar above sprite
+    ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
+    const hpColor = e.type === "jumper" ? "#CC44FF" : e.type === "flyer" ? "#FF4444" : "#00FF00";
+    ctx.fillStyle = hpColor; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
+    return;
+  }
+
+  // Fallback pixel art
   if (e.type === "jumper") {
-    // Purple body with coiled legs
     ctx.fillStyle = "#7B2FBE"; ctx.fillRect(rx, ry + 6, e.w, e.h - 6);
     ctx.fillStyle = "#5A1F8A";
     ctx.beginPath(); ctx.arc(rx + e.w / 2, ry + 8, e.w / 2 - 2, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#9B4FDE";
-    ctx.fillRect(rx + 4, ry + e.h - 4, 6, 6);
-    ctx.fillRect(rx + e.w - 10, ry + e.h - 4, 6, 6);
-    ctx.fillRect(rx + 4, ry + e.h + 2, 4, 4);
-    ctx.fillRect(rx + e.w - 8, ry + e.h + 2, 4, 4);
+    ctx.fillRect(rx + 4, ry + e.h - 4, 6, 6); ctx.fillRect(rx + e.w - 10, ry + e.h - 4, 6, 6);
+    ctx.fillRect(rx + 4, ry + e.h + 2, 4, 4); ctx.fillRect(rx + e.w - 8, ry + e.h + 2, 4, 4);
     ctx.fillStyle = "#FF0"; ctx.fillRect(rx + 7, ry + 4, 4, 4); ctx.fillRect(rx + 17, ry + 4, 4, 4);
     ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
     ctx.fillStyle = "#CC44FF"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
   } else if (e.type === "flyer") {
-    // Dark red body with wing shapes
     ctx.fillStyle = "#8B0000"; ctx.fillRect(rx + 4, ry + 4, e.w - 8, e.h - 8);
     const wingFlap = Math.sin(tick * 0.3 + e.sinOffset) * 4;
     ctx.fillStyle = "#CC2222";
-    ctx.fillRect(rx - 10, ry + 6 + wingFlap, 14, 8);
-    ctx.fillRect(rx + e.w - 4, ry + 6 + wingFlap, 14, 8);
+    ctx.fillRect(rx - 10, ry + 6 + wingFlap, 14, 8); ctx.fillRect(rx + e.w - 4, ry + 6 + wingFlap, 14, 8);
     ctx.fillStyle = "#FF4"; ctx.fillRect(rx + 7, ry + 6, 4, 4); ctx.fillRect(rx + 17, ry + 6, 4, 4);
     ctx.fillStyle = "#333"; ctx.fillRect(rx, ry - 6, e.w, 4);
     ctx.fillStyle = "#FF4444"; ctx.fillRect(rx, ry - 6, (e.w * e.hp) / 4, 4);
   } else {
-    // Walker — original green blob
     ctx.fillStyle = "#6B8E23"; ctx.fillRect(rx, ry + 8, e.w, e.h - 8);
     ctx.fillStyle = "#556B2F";
     ctx.beginPath(); ctx.arc(rx + e.w / 2, ry + 10, e.w / 2 - 2, 0, Math.PI * 2); ctx.fill();
@@ -714,36 +729,55 @@ function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
   }
 }
 
-function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null) {
+function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null, tileImg?: HTMLImageElement | null) {
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
   const gapW = 640;
+  const groundH = CANVAS_H - GROUND_Y;
 
-  // Draw ground in up to two segments, leaving a gap at the cliff
   const segments: [number, number][] = cliffX !== null
     ? [[0, cliffX], [cliffX + gapW, CANVAS_W]]
     : [[0, CANVAS_W]];
 
-  segments.forEach(([x0, x1]) => {
-    const w = x1 - x0;
-    if (w <= 0) return;
-    ctx.fillStyle = pal.ground; ctx.fillRect(x0, GROUND_Y, w, CANVAS_H - GROUND_Y);
-    ctx.fillStyle = pal.accent; ctx.fillRect(x0, GROUND_Y, w, 6);
-  });
-
-  // Tile seams
-  ctx.fillStyle = "rgba(0,0,0,0.2)";
-  const tileW = 48; const offset = scrollX % tileW;
-  for (let tx = -offset; tx < CANVAS_W; tx += tileW) {
-    // skip seams inside the gap
-    if (cliffX !== null && tx > cliffX && tx < cliffX + gapW) continue;
-    ctx.fillRect(Math.round(tx), GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+  if (tileImg) {
+    // Tile the ground image, scrolling with the level
+    const tileW = tileImg.naturalWidth || 130;
+    const tileH = tileImg.naturalHeight || 130;
+    const offset = scrollX % tileW;
+    ctx.save();
+    // Clip to each ground segment individually
+    segments.forEach(([x0, x1]) => {
+      const w = x1 - x0;
+      if (w <= 0) return;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x0, GROUND_Y, w, groundH); ctx.clip();
+      for (let tx = x0 - offset - tileW; tx < x1 + tileW; tx += tileW) {
+        for (let ty = GROUND_Y; ty < CANVAS_H; ty += tileH) {
+          ctx.drawImage(tileImg, Math.round(tx), Math.round(ty), tileW, tileH);
+        }
+      }
+      ctx.restore();
+    });
+    ctx.restore();
+  } else {
+    segments.forEach(([x0, x1]) => {
+      const w = x1 - x0;
+      if (w <= 0) return;
+      ctx.fillStyle = pal.ground; ctx.fillRect(x0, GROUND_Y, w, groundH);
+      ctx.fillStyle = pal.accent; ctx.fillRect(x0, GROUND_Y, w, 6);
+    });
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    const tileW = 48; const offset = scrollX % tileW;
+    for (let tx = -offset; tx < CANVAS_W; tx += tileW) {
+      if (cliffX !== null && tx > cliffX && tx < cliffX + gapW) continue;
+      ctx.fillRect(Math.round(tx), GROUND_Y + 6, 2, groundH - 6);
+    }
   }
 
-  // Cliff edges — draw a dark drop-off on each side of the gap
+  // Cliff edges
   if (cliffX !== null) {
     ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(cliffX - 4, GROUND_Y, 4, CANVAS_H - GROUND_Y);
-    ctx.fillRect(cliffX + gapW, GROUND_Y, 4, CANVAS_H - GROUND_Y);
+    ctx.fillRect(cliffX - 4, GROUND_Y, 4, groundH);
+    ctx.fillRect(cliffX + gapW, GROUND_Y, 4, groundH);
   }
 }
 
@@ -1001,6 +1035,12 @@ export default function GameCanvas() {
   const fireFrameRef = useRef<HTMLImageElement | null>(null);
   const bgImgRefs = useRef<(HTMLImageElement | null)[]>(Array(4).fill(null));
   const pedestalBgRef = useRef<HTMLImageElement | null>(null);
+  const groundTileRefs = useRef<(HTMLImageElement | null)[]>(Array(4).fill(null));
+  const enemyFrameRefs = useRef<Record<string, (HTMLImageElement | null)[]>>({
+    walker: Array(6).fill(null),
+    jumper: Array(6).fill(null),
+    flyer:  Array(6).fill(null),
+  });
 
   const [hudData, setHudData] = useState({
     score: 0, level: 1, lives: 3, collectedBoxes: [false, false, false], ammo: 30,
@@ -1041,6 +1081,27 @@ export default function GameCanvas() {
     const pedBg = new Image();
     pedBg.src = "/lvl4-pedestal-background.png";
     pedBg.onload = () => { pedestalBgRef.current = pedBg; };
+
+    const groundFiles = ["lvl1-tile_grass", "lvl2-tile_stone", "lvl3-tile_lava", "lvl4-tile_gold"];
+    groundFiles.forEach((name, i) => {
+      const img = new Image();
+      img.src = `/${name}.png`;
+      img.onload = () => { groundTileRefs.current[i] = img; };
+    });
+
+    const enemyTypes: Array<[string, string]> = [
+      ["walker", "green_idle"],
+      ["jumper", "purple_idle"],
+      ["flyer",  "bat_idle"],
+    ];
+    enemyTypes.forEach(([type, prefix]) => {
+      for (let i = 0; i < 6; i++) {
+        const img = new Image();
+        img.src = `/${prefix}${i + 1}.png`;
+        const idx = i;
+        img.onload = () => { enemyFrameRefs.current[type][idx] = img; };
+      }
+    });
   }, []);
 
   function updateHighScore(score: number) {
@@ -1813,12 +1874,19 @@ export default function GameCanvas() {
       ctx.translate(-Math.round(gs.cameraX), 0);
 
       // Draw ground across full room width
-      const palL4 = LEVEL_PALETTES[3];
-      ctx.fillStyle = palL4.ground; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, CANVAS_H - GROUND_Y);
-      ctx.fillStyle = palL4.accent; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, 6);
-      ctx.fillStyle = "rgba(0,0,0,0.2)";
-      const tileW = 48;
-      for (let tx = 0; tx < BOSS_ROOM_W; tx += tileW) ctx.fillRect(tx, GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+      const l4Tile = groundTileRefs.current[3];
+      if (l4Tile) {
+        const tW = l4Tile.naturalWidth || 130; const tH = l4Tile.naturalHeight || 130;
+        for (let tx = 0; tx < BOSS_ROOM_W; tx += tW)
+          for (let ty = GROUND_Y; ty < CANVAS_H; ty += tH)
+            ctx.drawImage(l4Tile, tx, ty, tW, tH);
+      } else {
+        const palL4 = LEVEL_PALETTES[3];
+        ctx.fillStyle = palL4.ground; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, CANVAS_H - GROUND_Y);
+        ctx.fillStyle = palL4.accent; ctx.fillRect(0, GROUND_Y, BOSS_ROOM_W, 6);
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        for (let tx = 0; tx < BOSS_ROOM_W; tx += 48) ctx.fillRect(tx, GROUND_Y + 6, 2, CANVAS_H - GROUND_Y - 6);
+      }
 
       // Platforms
       gs.platforms.forEach((p) => drawPlatform(ctx, p, 4));
@@ -1854,7 +1922,7 @@ export default function GameCanvas() {
       }
 
       // Enemies, bullets, player
-      gs.enemies.forEach((e) => drawEnemy(ctx, e, tick));
+      gs.enemies.forEach((e) => drawEnemy(ctx, e, tick, enemyFrameRefs.current));
       gs.bullets.forEach((b) => drawBullet(ctx, b));
       drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible, gs.isFiring, runFrameRefs.current, fireFrameRef.current);
 
@@ -1920,13 +1988,13 @@ export default function GameCanvas() {
         }
       }
 
-      drawGround(ctx, gs.level, gs.scrollX, gs.cliffX);
+      drawGround(ctx, gs.level, gs.scrollX, gs.cliffX, groundTileRefs.current[gs.level - 1]);
       gs.platforms.forEach((p)  => drawPlatform(ctx, p, gs.level));
       gs.blocks.forEach((b)     => drawBlock(ctx, b));
       if (gs.goldenBox)            drawGoldenBox(ctx, gs.goldenBox, tick);
       gs.ammoCrates.forEach((c)  => drawAmmoCrate(ctx, c));
       gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
-      gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
+      gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick, enemyFrameRefs.current));
       gs.bullets.forEach((b)    => drawBullet(ctx, b));
       drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible, gs.isFiring, runFrameRefs.current, fireFrameRef.current);
 
