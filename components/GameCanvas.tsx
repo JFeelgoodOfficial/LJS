@@ -129,6 +129,7 @@ interface GameState {
 
   keys: Record<string, boolean>;
   shootCooldown: number;
+  isFiring: boolean;
   levelTransTimer: number;
   deathTimer: number;
   titleAnimTimer: number;
@@ -440,7 +441,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     boxesToPlace: [...(prevState?.collectedLetters ?? [])],
     placingIndex: 0, placeTimer: 0, nameRevealTimer: 0,
 
-    keys: {}, shootCooldown: 0,
+    keys: {}, shootCooldown: 0, isFiring: false,
     levelTransTimer: 0, deathTimer: 0, titleAnimTimer: 0,
     bgParticles,
 
@@ -456,12 +457,30 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
 // ─────────────────────────────────────────────
 //  DRAW HELPERS
 // ─────────────────────────────────────────────
-function drawPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, facing: number, frame: number, invincible: number) {
+function drawPlayer(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  facing: number, frame: number, invincible: number,
+  isFiring: boolean,
+  runFrames: (HTMLImageElement | null)[],
+  fireFrame: HTMLImageElement | null,
+) {
   if (invincible > 0 && Math.floor(invincible / 4) % 2 === 0) return;
+  const sprite = isFiring ? fireFrame : runFrames[frame % 6] ?? runFrames[0];
+  const rx = Math.round(x); const ry = Math.round(y);
+  if (sprite) {
+    ctx.save();
+    if (facing < 0) {
+      ctx.translate(rx + 32, 0); ctx.scale(-1, 1); ctx.translate(-rx, 0);
+    }
+    ctx.drawImage(sprite, rx, ry, 32, 40);
+    ctx.restore();
+    return;
+  }
+  // Fallback: original pixel art
   const flip = facing < 0;
   ctx.save();
-  if (flip) { ctx.translate(Math.round(x) + 24, 0); ctx.scale(-1, 1); ctx.translate(-Math.round(x), 0); }
-  const rx = Math.round(x); const ry = Math.round(y);
+  if (flip) { ctx.translate(rx + 24, 0); ctx.scale(-1, 1); ctx.translate(-rx, 0); }
   ctx.fillStyle = "#FF69B4"; ctx.fillRect(rx + 4, ry + 8, 20, 18);
   ctx.fillStyle = "#FFDAB9"; ctx.fillRect(rx + 6, ry, 16, 14);
   ctx.fillStyle = "#8B4513"; ctx.fillRect(rx + 6, ry, 16, 5);
@@ -978,6 +997,10 @@ export default function GameCanvas() {
   const isTouchRef  = useRef<boolean>(false);
   const winRevealIndexRef = useRef<number>(0);
   const titleImgRef = useRef<HTMLImageElement | null>(null);
+  const runFrameRefs = useRef<(HTMLImageElement | null)[]>(Array(6).fill(null));
+  const fireFrameRef = useRef<HTMLImageElement | null>(null);
+  const bgImgRefs = useRef<(HTMLImageElement | null)[]>(Array(4).fill(null));
+  const pedestalBgRef = useRef<HTMLImageElement | null>(null);
 
   const [hudData, setHudData] = useState({
     score: 0, level: 1, lives: 3, collectedBoxes: [false, false, false], ammo: 30,
@@ -997,6 +1020,27 @@ export default function GameCanvas() {
     const img = new Image();
     img.src = "/LJS-title.png";
     img.onload = () => { titleImgRef.current = img; };
+  }, []);
+
+  useEffect(() => {
+    for (let i = 0; i < 6; i++) {
+      const img = new Image();
+      img.src = `/run_frame${i + 1}.png`;
+      const idx = i;
+      img.onload = () => { runFrameRefs.current[idx] = img; };
+    }
+    const fire = new Image();
+    fire.src = "/run-frame-fire.png";
+    fire.onload = () => { fireFrameRef.current = fire; };
+    for (let i = 0; i < 4; i++) {
+      const img = new Image();
+      img.src = `/lvl${i + 1}-background.png`;
+      const idx = i;
+      img.onload = () => { bgImgRefs.current[idx] = img; };
+    }
+    const pedBg = new Image();
+    pedBg.src = "/lvl4-pedestal-background.png";
+    pedBg.onload = () => { pedestalBgRef.current = pedBg; };
   }, []);
 
   function updateHighScore(score: number) {
@@ -1217,7 +1261,7 @@ export default function GameCanvas() {
     gs.py  += gs.pvy;
 
     gs.pAnimTimer++;
-    if (Math.abs(gs.pvx) > 0.5 && gs.pAnimTimer % 8 === 0) gs.pFrame = (gs.pFrame + 1) % 4;
+    if (Math.abs(gs.pvx) > 0.5 && gs.pAnimTimer % 8 === 0) gs.pFrame = (gs.pFrame + 1) % 6;
     if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
 
     gs.pOnGround = false;
@@ -1262,7 +1306,9 @@ export default function GameCanvas() {
     }
 
     if (gs.shootCooldown > 0) gs.shootCooldown--;
+    gs.isFiring = gs.shootCooldown > 0;
     if (shoot && gs.shootCooldown === 0 && gs.ammo > 0) {
+      gs.isFiring = true;
       const aw = gs.activeWeapon;
       const cooldown = aw?.type === "rapid" ? 5 : 12;
       const bx = gs.px + (gs.pFacing > 0 ? 30 : -10);
@@ -1738,11 +1784,19 @@ export default function GameCanvas() {
     }
 
     if (gs.level === 4 && gs.l4Phase === "boss") {
-      // Draw dark crimson boss room sky
-      const bossGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-      bossGrad.addColorStop(0, "#1a0000");
-      bossGrad.addColorStop(1, "#3d0000");
-      ctx.fillStyle = bossGrad; ctx.fillRect(0, 0, CANVAS_W, GROUND_Y);
+      // Draw boss room background (tiled, screen-space offset by camera)
+      const bossBg = bgImgRefs.current[3];
+      const bgTileW = 850; const bgH = 400;
+      if (bossBg) {
+        const startTile = Math.floor(gs.cameraX / bgTileW);
+        for (let t = startTile; t <= startTile + 2; t++) {
+          ctx.drawImage(bossBg, t * bgTileW - gs.cameraX, 0, bgTileW, bgH);
+        }
+      } else {
+        const bossGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+        bossGrad.addColorStop(0, "#1a0000"); bossGrad.addColorStop(1, "#3d0000");
+        ctx.fillStyle = bossGrad; ctx.fillRect(0, 0, CANVAS_W, GROUND_Y);
+      }
       // Draw ember bg particles (screen-space: offset by camera)
       gs.bgParticles.forEach((p) => {
         const sx = p.x - gs.cameraX;
@@ -1802,7 +1856,7 @@ export default function GameCanvas() {
       // Enemies, bullets, player
       gs.enemies.forEach((e) => drawEnemy(ctx, e, tick));
       gs.bullets.forEach((b) => drawBullet(ctx, b));
-      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
+      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible, gs.isFiring, runFrameRefs.current, fireFrameRef.current);
 
       // Particles (world space)
       gs.particles.forEach((p) => {
@@ -1840,7 +1894,18 @@ export default function GameCanvas() {
       }
     } else {
       // Normal rendering (levels 1-3 and level 4 pedestal)
-      drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
+      const bgTileW = 850; const bgH = 400;
+      const activeBg = gs.level === 4 && gs.l4Phase === "pedestal"
+        ? pedestalBgRef.current
+        : bgImgRefs.current[gs.level - 1];
+      if (activeBg) {
+        const startTile = Math.floor(gs.scrollX / bgTileW);
+        for (let t = startTile; t <= startTile + 2; t++) {
+          ctx.drawImage(activeBg, t * bgTileW - gs.scrollX, 0, bgTileW, bgH);
+        }
+      } else {
+        drawSky(ctx, gs.level, gs.stars, tick, gs.bgParticles);
+      }
 
       if (gs.level === 4 && gs.l4Phase === "pedestal") {
         drawPedestal(ctx, gs.pedestalSlots, tick);
@@ -1863,7 +1928,7 @@ export default function GameCanvas() {
       gs.weaponPickups.forEach((p) => drawWeaponPickup(ctx, p, tick));
       gs.enemies.forEach((e)    => drawEnemy(ctx, e, tick));
       gs.bullets.forEach((b)    => drawBullet(ctx, b));
-      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible);
+      drawPlayer(ctx, gs.px, gs.py, gs.pFacing, gs.pFrame, gs.pInvincible, gs.isFiring, runFrameRefs.current, fireFrameRef.current);
 
       gs.particles.forEach((p) => {
         ctx.globalAlpha = p.life / p.maxLife;
