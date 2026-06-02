@@ -1261,7 +1261,7 @@ export default function GameCanvas() {
     gs.py  += gs.pvy;
 
     gs.pAnimTimer++;
-    if (Math.abs(gs.pvx) > 0.5 && gs.pAnimTimer % 8 === 0) gs.pFrame = (gs.pFrame + 1) % 6;
+    if (gs.pAnimTimer % 6 === 0) gs.pFrame = (gs.pFrame + 1) % 6;
     if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
 
     gs.pOnGround = false;
@@ -1306,7 +1306,7 @@ export default function GameCanvas() {
     }
 
     if (gs.shootCooldown > 0) gs.shootCooldown--;
-    gs.isFiring = gs.shootCooldown > 0;
+    gs.isFiring = gs.shootCooldown > 8; // only show fire frame briefly after shot
     if (shoot && gs.shootCooldown === 0 && gs.ammo > 0) {
       gs.isFiring = true;
       const aw = gs.activeWeapon;
