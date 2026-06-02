@@ -215,7 +215,7 @@ function makeEnemy(x: number, y: number, vx: number, hp: number, type: "walker" 
   return { x, y, w: 28, h: 28, vx, vy: 0, hp, onGround: false, active: true, type, jumpTimer: Math.floor(Math.random() * 90), sinOffset: Math.random() * Math.PI * 2 };
 }
 
-const WEAPON_TYPES: Array<"rapid" | "double" | "big" | "pierce"> = ["rapid", "double", "big", "pierce"];
+const WEAPON_TYPES: Array<"rapid" | "double" | "big" | "pierce"> = ["rapid", "pierce"];
 const WEAPON_SHOTS: Record<string, number> = { rapid: 20, double: 12, big: 10, pierce: 8 };
 
 function generateLevel(level: number, scrollX: number): { blocks: Block[]; platforms: Platform[]; enemies: Enemy[]; ammoCrates: AmmoCrate[]; weaponPickups: WeaponPickup[] } {
@@ -396,10 +396,10 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       { x: 2200, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
     ];
     l4WeaponPickups = [
-      { x: 400, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "rapid" },
-      { x: 800, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "double" },
-      { x: 1600, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "big" },
-      { x: 2000, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "pierce" },
+      { x: 400,  y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "rapid" },
+      { x: 800,  y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "pierce" },
+      { x: 1400, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "rapid" },
+      { x: 1900, y: GROUND_Y - 30, w: 22, h: 22, collected: false, type: "pierce" },
     ];
     l4Platforms = [
       { x: 300, y: GROUND_Y - 100, w: 120, h: 16 },
