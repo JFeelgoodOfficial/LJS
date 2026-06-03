@@ -1104,18 +1104,18 @@ export default function GameCanvas() {
     fire.onload = () => { fireFrameRef.current = fire; };
     for (let i = 0; i < 4; i++) {
       const img = new Image();
-      img.src = `/lvl${i + 1}-background.png`;
+      img.src = `/lvl${i + 1}-background.webp`;
       const idx = i;
       img.onload = () => { bgImgRefs.current[idx] = img; };
     }
     const pedBg = new Image();
-    pedBg.src = "/lvl4-pedestal-background.png";
+    pedBg.src = "/lvl4-pedestal-background.webp";
     pedBg.onload = () => { pedestalBgRef.current = pedBg; };
 
     const groundFiles = ["lvl1-tile_grass", "lvl2-tile_stone", "lvl3-tile_lava", "lvl4-tile_gold"];
     groundFiles.forEach((name, i) => {
       const img = new Image();
-      img.src = `/${name}.png`;
+      img.src = `/${name}.webp`;
       img.onload = () => { groundTileRefs.current[i] = img; };
     });
 
