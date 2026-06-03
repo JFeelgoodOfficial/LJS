@@ -2038,19 +2038,31 @@ export default function GameCanvas() {
 
       if (gs.px > CANVAS_W - 100) gs.px = CANVAS_W - 100;
 
-      const lastPlat = gs.platforms.reduce((mx, p) => Math.max(mx, p.x), 0);
-      if (lastPlat < CANVAS_W + 400) {
-        const chunk = generateLevel(gs.level, CANVAS_W + 400);
-        gs.blocks.push(...chunk.blocks);
-        gs.platforms.push(...chunk.platforms);
-        gs.enemies.push(...chunk.enemies);
-        gs.ammoCrates.push(...chunk.ammoCrates);
-        gs.weaponPickups.push(...chunk.weaponPickups);
+      // Only spawn new chunks while the cliff hasn't appeared yet
+      if (gs.cliffX === null) {
+        const lastPlat = gs.platforms.reduce((mx, p) => Math.max(mx, p.x), 0);
+        if (lastPlat < CANVAS_W + 400) {
+          const chunk = generateLevel(gs.level, CANVAS_W + 400);
+          gs.blocks.push(...chunk.blocks);
+          gs.platforms.push(...chunk.platforms);
+          gs.enemies.push(...chunk.enemies);
+          gs.ammoCrates.push(...chunk.ammoCrates);
+          gs.weaponPickups.push(...chunk.weaponPickups);
+        }
       }
 
       if (gs.goldenBox && !gs.goldenBox.spawned && gs.scrollX > gs.levelLength - 800) {
         gs.goldenBox.spawned = true; gs.goldenBox.x = CANVAS_W + 200; gs.goldenBox.y = GROUND_Y - 80;
         if (gs.level !== 3) gs.cliffX = CANVAS_W + 400; // cliff starts 200px after the golden box
+        // Clear everything beyond the cliff — nothing spawns past the drop
+        if (gs.cliffX !== null) {
+          const cliffEdge = gs.cliffX;
+          gs.blocks    = gs.blocks.filter((b) => b.x + b.w < cliffEdge);
+          gs.platforms = gs.platforms.filter((p) => p.x + p.w < cliffEdge);
+          gs.enemies   = gs.enemies.filter((e) => e.x + e.w < cliffEdge);
+          gs.ammoCrates = gs.ammoCrates.filter((c) => c.x + c.w < cliffEdge);
+          gs.weaponPickups = gs.weaponPickups.filter((p) => p.x + p.w < cliffEdge);
+        }
       }
 
       if (gs.scrollX >= gs.levelLength && gs.goldenBox?.collected) {
