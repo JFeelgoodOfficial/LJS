@@ -132,6 +132,7 @@ interface GameState {
   isFiring: boolean;
   levelTransTimer: number;
   deathTimer: number;
+  deathCause: string;
   titleAnimTimer: number;
   bgParticles: Particle[];
 
@@ -442,7 +443,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     placingIndex: 0, placeTimer: 0, nameRevealTimer: 0,
 
     keys: {}, shootCooldown: 0, isFiring: false,
-    levelTransTimer: 0, deathTimer: 0, titleAnimTimer: 0,
+    levelTransTimer: 0, deathTimer: 0, deathCause: "", titleAnimTimer: 0,
     bgParticles,
 
     shakeTimer: 0,
@@ -1542,7 +1543,9 @@ export default function GameCanvas() {
           audio.playHit();
         }
       } else if (gs.pInvincible === 0 && rectsOverlap(playerRect, enRect)) {
+        const causeMap: Record<string, string> = { walker: "STOMPED BY A WALKER", jumper: "AMBUSHED BY A JUMPER", flyer: "SWOOPED BY A FLYER" };
         gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+        gs.deathCause = causeMap[en.type] ?? "KILLED BY AN ENEMY";
         spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
         if (gs.lives <= 0) {
           updateHighScore(gs.score);
@@ -1604,6 +1607,7 @@ export default function GameCanvas() {
           if (gs.pInvincible === 0 && rectsOverlap({ x: sp.x - 3, y: sp.y - 3, w: 6, h: 6 }, { x: gs.px + 2, y: gs.py, w: 28, h: 40 })) {
             sp.life = 0;
             gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+            gs.deathCause = "HIT BY BOSS SPRAY";
             spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
             if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
           }
@@ -1649,6 +1653,7 @@ export default function GameCanvas() {
               const dist = Math.hypot(gs.px + 16 - bomb.x, gs.py + 20 - bomb.y);
               if (dist < 55 && gs.pInvincible === 0) {
                 gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+                gs.deathCause = "CAUGHT IN AN EXPLOSION";
                 spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
                 if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
               }
@@ -1692,6 +1697,7 @@ export default function GameCanvas() {
             // Check if player is within 70px
             if (Math.abs(gs.px + 16 - (boss.x + boss.w / 2)) < 70 && gs.pInvincible === 0) {
               gs.lives--; gs.pInvincible = 90; audio.playDeath();
+              gs.deathCause = "CRUSHED BY THE BOSS";
               spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
               if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
             }
@@ -1713,6 +1719,7 @@ export default function GameCanvas() {
         const playerRectB: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
         if (gs.pInvincible === 0 && rectsOverlap(playerRectB, bossRect)) {
           gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
+          gs.deathCause = "TOUCHED BY THE BOSS";
           spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
           if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
         }
@@ -1860,6 +1867,7 @@ export default function GameCanvas() {
 
     if (gs.py > CANVAS_H + 100) {
       gs.lives--; gs.py = GROUND_Y - 60; gs.pvy = 0;
+      gs.deathCause = "FELL INTO THE VOID";
       if (gs.lives <= 0) {
         updateHighScore(gs.score);
         gs.phase = "dead"; setGamePhase("dead"); audio.playDeath();
@@ -2144,15 +2152,19 @@ export default function GameCanvas() {
     ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     ctx.fillStyle = "#FF0000"; ctx.font = '28px "Press Start 2P", cursive';
     ctx.textAlign = "center"; ctx.shadowColor = "#880000"; ctx.shadowBlur = 15;
-    ctx.fillText("GAME OVER", CANVAS_W / 2, CANVAS_H / 2 - 50); ctx.shadowBlur = 0;
+    ctx.fillText("GAME OVER", CANVAS_W / 2, CANVAS_H / 2 - 60); ctx.shadowBlur = 0;
+    if (gs.deathCause) {
+      ctx.fillStyle = "#FF6644"; ctx.font = '8px "Press Start 2P", cursive';
+      ctx.fillText(gs.deathCause, CANVAS_W / 2, CANVAS_H / 2 - 32);
+    }
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
-    ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2);
+    ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 5);
     if (highScore > 0) {
       ctx.fillStyle = "#FFA500"; ctx.font = '8px "Press Start 2P", cursive';
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 22);
+      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 27);
     }
     ctx.fillStyle = gs.lives > 0 ? "#aaa" : "#888"; ctx.font = '8px "Press Start 2P", cursive';
-    ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 45);
+    ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 50);
     if (Math.floor(tick / 30) % 2 === 0) {
       ctx.fillStyle = "#FFD700"; ctx.font = '9px "Press Start 2P", cursive';
       ctx.fillText("TAP / SPACE / CLICK TO CONTINUE", CANVAS_W / 2, CANVAS_H - 60);
