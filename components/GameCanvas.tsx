@@ -534,7 +534,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       x: BOSS_ROOM_W / 2 - 40, y: GROUND_Y - 80,
       w: 80, h: 80,
       vx: 1, vy: 0,
-      hp: 30, maxHp: 30,
+      hp: 90, maxHp: 90,
       phase: 1,
       active: true,
       onGround: true,
@@ -762,7 +762,7 @@ function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: 
 
 function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   if (!boss.active || boss.defeated) return;
-  const phase3 = boss.hp <= 10;
+  const phase3 = boss.hp <= 30;
   const redFlash = phase3 && Math.floor(tick / 6) % 2 === 0;
   const isWindup = boss.attackType === "windup";
   const windupPulse = isWindup && Math.floor(tick / 3) % 2 === 0;
@@ -876,12 +876,12 @@ function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   const barX = rx - 10;
   ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(barX, ry - 20, barW, 12);
   const hpPct = Math.max(0, boss.hp / boss.maxHp);
-  ctx.fillStyle = boss.hp > 20 ? "#00CC00" : boss.hp > 10 ? "#CCCC00" : "#CC0000";
+  ctx.fillStyle = boss.hp > 60 ? "#00CC00" : boss.hp > 30 ? "#CCCC00" : "#CC0000";
   ctx.fillRect(barX, ry - 20, barW * hpPct, 12);
   // Phase markers at 2/3 and 1/3
   ctx.strokeStyle = "#FFFFFF88"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(barX + barW * (20/30), ry - 20); ctx.lineTo(barX + barW * (20/30), ry - 8); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(barX + barW * (10/30), ry - 20); ctx.lineTo(barX + barW * (10/30), ry - 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(barX + barW * (60/90), ry - 20); ctx.lineTo(barX + barW * (60/90), ry - 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(barX + barW * (30/90), ry - 20); ctx.lineTo(barX + barW * (30/90), ry - 8); ctx.stroke();
   ctx.strokeStyle = "#FFF"; ctx.lineWidth = 1; ctx.strokeRect(barX, ry - 20, barW, 12);
 }
 
@@ -1833,7 +1833,7 @@ export default function GameCanvas() {
         const bw = (b as Bullet & { big?: boolean }).big ? 16 : 10;
         const bh = (b as Bullet & { big?: boolean }).big ? 10 : 5;
         const dmg = (b as Bullet & { big?: boolean }).big ? 2 : 1;
-        const phase3Hit = gs.boss.hp <= 10;
+        const phase3Hit = gs.boss.hp <= 30;
         const hitW = phase3Hit ? gs.boss.w * 2 : gs.boss.w;
         const hitH = phase3Hit ? gs.boss.h * 2 : gs.boss.h;
         const hitX = gs.boss.x - (phase3Hit ? gs.boss.w / 2 : 0);
@@ -1942,7 +1942,7 @@ export default function GameCanvas() {
       const boss = gs.boss;
 
       // Phase transition: check if HP just crossed a threshold
-      const curPhase = boss.hp > 20 ? 1 : boss.hp > 10 ? 2 : 3;
+      const curPhase = boss.hp > 60 ? 1 : boss.hp > 30 ? 2 : 3;
       if (curPhase > boss.lastPhase) {
         boss.lastPhase = curPhase;
         boss.freezeTimer = 4;
@@ -1970,7 +1970,7 @@ export default function GameCanvas() {
         if (boss.attackCooldown <= 0) {
           // Phase 1 (hp 21-30): spray only; Phase 2 (hp 11-20): bombs only; Phase 3 (hp 1-10): stomp only
           const nextAttack: "spray" | "bombs" | "stomp" =
-            boss.hp > 20 ? "spray" : boss.hp > 10 ? "bombs" : "stomp";
+            boss.hp > 60 ? "spray" : boss.hp > 30 ? "bombs" : "stomp";
           // Enter windup before the attack
           boss.pendingAttack = nextAttack;
           boss.attackType = "windup";
@@ -2129,7 +2129,7 @@ export default function GameCanvas() {
 
       // Boss contact damage (only in idle/stomp)
       if (boss.attackType !== "spray") {
-        const p3c = boss.hp <= 10;
+        const p3c = boss.hp <= 30;
         const bossRect: Rect = p3c
           ? { x: boss.x - boss.w / 2, y: boss.y - boss.h, w: boss.w * 2, h: boss.h * 2 }
           : { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
