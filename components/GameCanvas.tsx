@@ -856,53 +856,49 @@ function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
 
 function drawGround(ctx: CanvasRenderingContext2D, level: number, scrollX: number, cliffX: number | null, tileImg?: HTMLImageElement | null) {
   const pal = LEVEL_PALETTES[level - 1] ?? LEVEL_PALETTES[0];
-  const gapW = 640;
   const groundH = CANVAS_H - GROUND_Y;
-
-  const segments: [number, number][] = cliffX !== null
-    ? [[0, cliffX], [cliffX + gapW, CANVAS_W]]
-    : [[0, CANVAS_W]];
+  const wallW = 20; // wall thickness
 
   if (tileImg) {
-    // Tile the ground image, scrolling with the level
     const tileW = tileImg.naturalWidth || 130;
     const tileH = tileImg.naturalHeight || 130;
     const offset = scrollX % tileW;
     ctx.save();
-    // Clip to each ground segment individually
-    segments.forEach(([x0, x1]) => {
-      const w = x1 - x0;
-      if (w <= 0) return;
+    ctx.beginPath(); ctx.rect(0, GROUND_Y, CANVAS_W, groundH); ctx.clip();
+    for (let tx = -offset - tileW; tx < CANVAS_W + tileW; tx += tileW) {
+      for (let ty = GROUND_Y; ty < CANVAS_H; ty += tileH) {
+        ctx.drawImage(tileImg, Math.round(tx), Math.round(ty), tileW, tileH);
+      }
+    }
+    ctx.restore();
+    // Wall — tile the same image vertically
+    if (cliffX !== null && cliffX > -wallW && cliffX < CANVAS_W) {
       ctx.save();
-      ctx.beginPath(); ctx.rect(x0, GROUND_Y, w, groundH); ctx.clip();
-      for (let tx = x0 - offset - tileW; tx < x1 + tileW; tx += tileW) {
-        for (let ty = GROUND_Y; ty < CANVAS_H; ty += tileH) {
+      ctx.beginPath(); ctx.rect(cliffX, 0, wallW, CANVAS_H); ctx.clip();
+      for (let tx = cliffX; tx < cliffX + wallW; tx += tileW) {
+        for (let ty = 0; ty < CANVAS_H; ty += tileH) {
           ctx.drawImage(tileImg, Math.round(tx), Math.round(ty), tileW, tileH);
         }
       }
       ctx.restore();
-    });
-    ctx.restore();
+      // Dark edge on left side of wall
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(cliffX, 0, 3, CANVAS_H);
+    }
   } else {
-    segments.forEach(([x0, x1]) => {
-      const w = x1 - x0;
-      if (w <= 0) return;
-      ctx.fillStyle = pal.ground; ctx.fillRect(x0, GROUND_Y, w, groundH);
-      ctx.fillStyle = pal.accent; ctx.fillRect(x0, GROUND_Y, w, 6);
-    });
+    ctx.fillStyle = pal.ground; ctx.fillRect(0, GROUND_Y, CANVAS_W, groundH);
+    ctx.fillStyle = pal.accent; ctx.fillRect(0, GROUND_Y, CANVAS_W, 6);
     ctx.fillStyle = "rgba(0,0,0,0.2)";
-    const tileW = 48; const offset = scrollX % tileW;
-    for (let tx = -offset; tx < CANVAS_W; tx += tileW) {
-      if (cliffX !== null && tx > cliffX && tx < cliffX + gapW) continue;
+    const tileW2 = 48; const offset2 = scrollX % tileW2;
+    for (let tx = -offset2; tx < CANVAS_W; tx += tileW2) {
       ctx.fillRect(Math.round(tx), GROUND_Y + 6, 2, groundH - 6);
     }
-  }
-
-  // Cliff edges
-  if (cliffX !== null) {
-    ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(cliffX - 4, GROUND_Y, 4, groundH);
-    ctx.fillRect(cliffX + gapW, GROUND_Y, 4, groundH);
+    // Wall
+    if (cliffX !== null && cliffX > -wallW && cliffX < CANVAS_W) {
+      ctx.fillStyle = pal.ground; ctx.fillRect(cliffX, 0, wallW, CANVAS_H);
+      ctx.fillStyle = pal.accent; ctx.fillRect(cliffX, 0, 4, CANVAS_H);
+      ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(cliffX, 0, 3, CANVAS_H);
+    }
   }
 }
 
@@ -1488,8 +1484,19 @@ export default function GameCanvas() {
     if (gs.pInvincible > 0) { gs.pInvincible--; gs.pFlash = !gs.pFlash; }
 
     gs.pOnGround = false;
-    const overCliff = gs.cliffX !== null && gs.px + 16 > gs.cliffX && gs.px + 16 < gs.cliffX + 640;
-    if (!overCliff && gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
+    if (gs.py + 40 >= GROUND_Y) { gs.py = GROUND_Y - 40; gs.pvy = 0; gs.pOnGround = true; }
+
+    // Wall kill — player touches the wall
+    if (gs.cliffX !== null && gs.px + 32 >= gs.cliffX) {
+      gs.px = gs.cliffX - 32; // push back so we see the hit
+      gs.lives--;
+      gs.deathCause = "CRUSHED BY THE WALL";
+      spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 16, 5);
+      gs.shakeTimer = 12;
+      audio.playDeath();
+      if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
+      else { gs.pInvincible = 90; }
+    }
 
     // Level 4 boss phase: bound player in room, update camera
     if (gs.level === 4 && gs.l4Phase === "boss") {
