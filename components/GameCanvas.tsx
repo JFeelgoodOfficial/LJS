@@ -1272,8 +1272,12 @@ export default function GameCanvas() {
       syncTouchKeys(e.touches);
     }
 
+    let lastTouchMove = 0;
     function onTouchMove(e: TouchEvent) {
       e.preventDefault();
+      const now = Date.now();
+      if (now - lastTouchMove < 16) return;
+      lastTouchMove = now;
       if (stateRef.current?.phase === "playing") syncTouchKeys(e.touches);
     }
 
@@ -1464,6 +1468,7 @@ export default function GameCanvas() {
       });
       gs.enemies.forEach((en) => {
         if (!en.active || !b.active) return;
+        if (Math.abs(b.x - en.x) > 60 || Math.abs(b.y - en.y) > 60) return;
         if (rectsOverlap(bRect, { x: en.x, y: en.y, w: en.w, h: en.h })) {
           en.hp -= b.big ? 2 : 1;
           if (!b.pierce) b.active = false;
@@ -1622,13 +1627,11 @@ export default function GameCanvas() {
             });
           }
         }
-        // Move spray particles
-        boss.sprayParticles.forEach((sp) => {
+        // Move spray particles — update, collide, and filter in one pass
+        let spLen = boss.sprayParticles.length;
+        for (let si = spLen - 1; si >= 0; si--) {
+          const sp = boss.sprayParticles[si];
           sp.x += sp.vx; sp.y += sp.vy; sp.life--;
-        });
-        boss.sprayParticles = boss.sprayParticles.filter((sp) => sp.life > 0);
-        // Collision with player
-        boss.sprayParticles.forEach((sp) => {
           if (gs.pInvincible === 0 && rectsOverlap({ x: sp.x - 3, y: sp.y - 3, w: 6, h: 6 }, { x: gs.px + 2, y: gs.py, w: 28, h: 40 })) {
             sp.life = 0;
             gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
@@ -1636,7 +1639,8 @@ export default function GameCanvas() {
             spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
             if (gs.lives <= 0) { updateHighScore(gs.score); gs.phase = "dead"; gs.deathTimer = 0; setGamePhase("dead"); }
           }
-        });
+          if (sp.life <= 0) { boss.sprayParticles[si] = boss.sprayParticles[--spLen]; boss.sprayParticles.length = spLen; }
+        }
         if (boss.attackTimer >= 120) {
           boss.sprayParticles = [];
           boss.attackType = "idle";
@@ -1887,8 +1891,16 @@ export default function GameCanvas() {
     if (gs.shakeTimer > 0) gs.shakeTimer--;
 
 
-    gs.particles.forEach((p) => { p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; });
-    gs.particles = gs.particles.filter((p) => p.life > 0);
+    const MAX_PARTICLES = 200;
+    // Update particles in-place, mark dead ones
+    let pLen = gs.particles.length;
+    for (let i = pLen - 1; i >= 0; i--) {
+      const p = gs.particles[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--;
+      if (p.life <= 0) { gs.particles[i] = gs.particles[--pLen]; gs.particles.length = pLen; }
+    }
+    // Cap particles
+    if (gs.particles.length > MAX_PARTICLES) gs.particles.length = MAX_PARTICLES;
 
     if (gs.py > CANVAS_H + 100) {
       gs.lives--; gs.py = GROUND_Y - 60; gs.pvy = 0;
@@ -1901,7 +1913,10 @@ export default function GameCanvas() {
     }
 
     if (tick % 6 === 0) {
-      setHudData({ score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo });
+      setHudData((prev) => {
+        if (prev.score === gs.score && prev.level === gs.level && prev.lives === gs.lives && prev.ammo === gs.ammo) return prev;
+        return { score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo };
+      });
     }
   }
 
@@ -1909,8 +1924,6 @@ export default function GameCanvas() {
   //  RENDER
   // ─────────────────────────────────────────────
   function renderGame(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
-    ctx.imageSmoothingEnabled = false;
-
     // Screen shake
     const shaking = gs.shakeTimer > 0;
     if (shaking) {
