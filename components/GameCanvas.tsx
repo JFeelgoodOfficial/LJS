@@ -762,10 +762,51 @@ function drawGoldenBox(ctx: CanvasRenderingContext2D, gb: GoldenBox, tick: numbe
   if (!gb.spawned || gb.collected) return;
   const bob = Math.sin(tick * 0.05) * 4;
   const bx = Math.round(gb.x); const by = Math.round(gb.y + bob);
-  const grd = ctx.createRadialGradient(bx + gb.w / 2, by + gb.h / 2, 4, bx + gb.w / 2, by + gb.h / 2, 28);
-  grd.addColorStop(0, "rgba(255,215,0,0.4)"); grd.addColorStop(1, "rgba(255,215,0,0)");
-  ctx.fillStyle = grd; ctx.fillRect(bx - 10, by - 10, gb.w + 20, gb.h + 20);
+
+  // ── Bobbing rose arrow above chest ──
+  const arrowBob = Math.sin(tick * 0.08) * 6;
+  const arrowY = by - 28 + arrowBob;
+  const arrowX = bx + gb.w / 2;
+  const arrowAlpha = 0.7 + 0.3 * Math.sin(tick * 0.1);
+  ctx.save();
+  ctx.globalAlpha = arrowAlpha;
+  ctx.fillStyle = "#FF88AA";
+  ctx.shadowColor = "#FF88AA"; ctx.shadowBlur = 8;
+  // Arrow body
+  ctx.fillRect(arrowX - 4, arrowY - 10, 8, 12);
+  // Arrowhead
+  ctx.beginPath();
+  ctx.moveTo(arrowX - 10, arrowY + 2);
+  ctx.lineTo(arrowX + 10, arrowY + 2);
+  ctx.lineTo(arrowX, arrowY + 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // ── Shimmer / glow aura ──
+  const shimmerAlpha = 0.25 + 0.2 * Math.sin(tick * 0.12);
+  const grd = ctx.createRadialGradient(bx + gb.w / 2, by + gb.h / 2, 4, bx + gb.w / 2, by + gb.h / 2, 36);
+  grd.addColorStop(0, `rgba(255,215,0,${shimmerAlpha + 0.2})`);
+  grd.addColorStop(1, "rgba(255,215,0,0)");
+  ctx.fillStyle = grd; ctx.fillRect(bx - 16, by - 16, gb.w + 32, gb.h + 32);
+
+  // ── Chest body ──
   ctx.fillStyle = "#FFD700"; ctx.fillRect(bx, by, gb.w, gb.h);
+  // Shimmer highlight strip
+  const shimmerX = ((tick * 2) % (gb.w + 20)) - 10;
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath();
+  ctx.moveTo(bx + shimmerX, by);
+  ctx.lineTo(bx + shimmerX + 10, by);
+  ctx.lineTo(bx + shimmerX + 6, by + gb.h);
+  ctx.lineTo(bx + shimmerX - 4, by + gb.h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
   ctx.strokeStyle = "#FFA500"; ctx.lineWidth = 3; ctx.strokeRect(bx + 1, by + 1, gb.w - 2, gb.h - 2);
   ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2;
   ctx.beginPath();
@@ -774,6 +815,22 @@ function drawGoldenBox(ctx: CanvasRenderingContext2D, gb: GoldenBox, tick: numbe
   ctx.stroke();
   ctx.fillStyle = "#8B6914"; ctx.font = '9px "Press Start 2P", cursive'; ctx.textAlign = "center";
   ctx.fillText(gb.letter, bx + gb.w / 2, by + gb.h / 2 + 4);
+
+  // ── Orbiting sparkle particles ──
+  for (let i = 0; i < 4; i++) {
+    const angle = (tick * 0.04) + (i * Math.PI / 2);
+    const r = 22 + Math.sin(tick * 0.07 + i) * 4;
+    const sx = bx + gb.w / 2 + Math.cos(angle) * r;
+    const sy = by + gb.h / 2 + Math.sin(angle) * r * 0.5;
+    const sparkAlpha = 0.5 + 0.5 * Math.sin(tick * 0.15 + i);
+    ctx.save();
+    ctx.globalAlpha = sparkAlpha;
+    ctx.fillStyle = i % 2 === 0 ? "#FFD700" : "#FFFACD";
+    ctx.shadowColor = "#FFD700"; ctx.shadowBlur = 6;
+    ctx.fillRect(sx - 2, sy - 2, 4, 4);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 }
 
 function drawPlatform(ctx: CanvasRenderingContext2D, p: Platform, level: number) {
@@ -1562,6 +1619,12 @@ export default function GameCanvas() {
             spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5);
             gs.score += 100 * multiplier;
             gs.comboCount++; gs.comboTimer = 120;
+            if (gs.comboCount % 5 === 0) {
+              gs.lives++;
+              gs.pickupAnnounce = { text: `COMBO x${gs.comboCount} — EXTRA LIFE!`, color: "#FF69B4", timer: 180 };
+              spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#FF69B4", 20, 6);
+              audio.playCollect();
+            }
             audio.playEnemyDie();
           }
         }
@@ -1649,6 +1712,12 @@ export default function GameCanvas() {
         const multiplier = Math.min(Math.max(gs.comboCount, 1), 4);
         gs.score += 150 * multiplier;
         gs.comboCount++; gs.comboTimer = 120;
+        if (gs.comboCount % 5 === 0) {
+          gs.lives++;
+          gs.pickupAnnounce = { text: `COMBO x${gs.comboCount} — EXTRA LIFE!`, color: "#FF69B4", timer: 180 };
+          spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#FF69B4", 20, 6);
+          audio.playCollect();
+        }
         if (en.hp <= 0) {
           en.active = false;
           spawnParticles(gs.particles, en.x + en.w / 2, en.y + en.h / 2, "#6B8E23", 14, 5);
