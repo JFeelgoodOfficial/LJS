@@ -71,7 +71,8 @@ interface Boss {
   chargeActive: boolean;
   chargeFrames: number;
   // Level 4 boss state machine
-  attackType: "idle" | "spray" | "bombs" | "stomp";
+  attackType: "idle" | "windup" | "spray" | "bombs" | "stomp";
+  pendingAttack: "spray" | "bombs" | "stomp" | null;
   attackTimer: number;
   attackCooldown: number;
   sprayParticles: Array<{x: number; y: number; vx: number; vy: number; life: number; maxLife: number}>;
@@ -81,6 +82,9 @@ interface Boss {
   stompY: number;
   stompPasses: number;
   defeatedTimer: number;
+  vulnerableTimer: number;    // frames of post-attack weak window (2× damage)
+  freezeTimer: number;        // screen-freeze frames on phase transition
+  lastPhase: number;          // tracks which phase transition already fired
 }
 
 interface GameState {
@@ -382,6 +386,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       chargeActive: false,
       chargeFrames: 0,
       attackType: "idle",
+      pendingAttack: null,
       attackTimer: 0,
       attackCooldown: 120 + Math.floor(Math.random() * 60),
       sprayParticles: [],
@@ -391,6 +396,9 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       stompY: GROUND_Y - 80,
       stompPasses: 0,
       defeatedTimer: 0,
+      vulnerableTimer: 0,
+      freezeTimer: 0,
+      lastPhase: 1,
     };
     l4AmmoCrates = [
       { x: 200, y: GROUND_Y - 24, w: 20, h: 20, collected: false },
@@ -596,16 +604,31 @@ function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
   if (!boss.active || boss.defeated) return;
   const phase3 = boss.hp <= 10;
   const redFlash = phase3 && Math.floor(tick / 6) % 2 === 0;
+  const isWindup = boss.attackType === "windup";
+  const windupPulse = isWindup && Math.floor(tick / 3) % 2 === 0;
+  // Windup: boss squishes down (crouches) by 25%
+  const crouchScale = isWindup ? 0.75 + 0.25 * (boss.attackTimer / 30) : 1;
+
   // In phase 3 boss is drawn at 2x size — adjust draw origin so bottom stays on ground
   const drawW = phase3 ? boss.w * 2 : boss.w;
-  const drawH = phase3 ? boss.h * 2 : boss.h;
+  const baseH = phase3 ? boss.h * 2 : boss.h;
+  const drawH = Math.round(baseH * crouchScale);
   const rx = Math.round(boss.x) - (phase3 ? boss.w / 2 : 0);
-  const ry = Math.round(boss.y) - (phase3 ? boss.h : 0);
+  // Keep feet at same Y — shift top of body down as it crouches
+  const ry = Math.round(boss.y) - (phase3 ? boss.h : 0) + (baseH - drawH);
   const isStorming = boss.attackType === "stomp" && !boss.onGround;
   const isSpray = boss.attackType === "spray";
 
+  // Yellow flash during windup
+  if (windupPulse) {
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = "#FFFF00";
+    ctx.fillRect(rx - 10, ry - 10, drawW + 20, drawH + 20);
+    ctx.globalAlpha = 1;
+  }
+
   // Red flash overlay for phase 3
-  if (redFlash) {
+  if (redFlash && !windupPulse) {
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = "#FF0000";
     ctx.fillRect(rx - 8, ry - 8, drawW + 16, drawH + 16);
@@ -618,6 +641,25 @@ function drawBoss(ctx: CanvasRenderingContext2D, boss: Boss, tick: number) {
     ctx.globalAlpha = glowAlpha;
     ctx.fillStyle = "#FF8800";
     ctx.fillRect(rx - 16, ry - 16, drawW + 32, drawH + 32);
+    ctx.globalAlpha = 1;
+  }
+
+  // Gold glow on belly during vulnerable window
+  if (boss.vulnerableTimer > 0) {
+    const vAlpha = (boss.vulnerableTimer / 90) * (0.4 + 0.2 * Math.sin(tick * 0.4));
+    ctx.globalAlpha = vAlpha;
+    ctx.fillStyle = "#FFD700";
+    const bX = rx + Math.round(drawW * 0.3);
+    const bY = ry + Math.round(drawH * 0.55);
+    const bW = Math.round(drawW * 0.4);
+    const bH = Math.round(drawH * 0.3);
+    ctx.fillRect(bX, bY, bW, bH);
+    ctx.globalAlpha = 1;
+    // Pulsing ring
+    ctx.strokeStyle = "#FFD700";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = vAlpha * 0.8;
+    ctx.strokeRect(bX - 2, bY - 2, bW + 4, bH + 4);
     ctx.globalAlpha = 1;
   }
 
@@ -1495,10 +1537,12 @@ export default function GameCanvas() {
         const hitX = gs.boss.x - (phase3Hit ? gs.boss.w / 2 : 0);
         const hitY = gs.boss.y - (phase3Hit ? gs.boss.h : 0);
         if (rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: hitX, y: hitY, w: hitW, h: hitH })) {
-          gs.boss.hp -= dmg;
+          const vulnerable = gs.boss.vulnerableTimer > 0;
+          const actualDmg = vulnerable ? dmg * 2 : dmg;
+          gs.boss.hp -= actualDmg;
           if (!(b as Bullet & { pierce?: boolean }).pierce) b.active = false;
-          spawnParticles(gs.particles, b.x, b.y, "#CC0000", 6, 3);
-          gs.score += 50;
+          spawnParticles(gs.particles, b.x, b.y, vulnerable ? "#FFD700" : "#CC0000", vulnerable ? 10 : 6, vulnerable ? 5 : 3);
+          gs.score += vulnerable ? 100 : 50;
           if (gs.boss.hp <= 0 && !gs.boss.defeated) {
             gs.boss.defeated = true;
             gs.boss.defeatedTimer = 0;
@@ -1587,7 +1631,26 @@ export default function GameCanvas() {
     // Boss update (level 4 boss phase only)
     if (gs.level === 4 && gs.l4Phase === "boss" && gs.boss && gs.boss.active && !gs.boss.defeated) {
       const boss = gs.boss;
+
+      // Phase transition: check if HP just crossed a threshold
+      const curPhase = boss.hp > 20 ? 1 : boss.hp > 10 ? 2 : 3;
+      if (curPhase > boss.lastPhase) {
+        boss.lastPhase = curPhase;
+        boss.freezeTimer = 4;
+        gs.shakeTimer = 20;
+        spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y + boss.h / 2, "#FFFFFF", 30, 8);
+        spawnParticles(gs.particles, boss.x + boss.w / 2, boss.y + boss.h / 2, "#FF0000", 20, 6);
+        audio.playTone(80, 0.6, "sawtooth", 0.3);
+      }
+
+      // Freeze frames — skip all movement/attack logic
+      if (boss.freezeTimer > 0) { boss.freezeTimer--; }
+      else {
+
       boss.attackTimer++;
+
+      // Tick down vulnerable window
+      if (boss.vulnerableTimer > 0) boss.vulnerableTimer--;
 
       if (boss.attackType === "idle") {
         // Patrol slowly
@@ -1599,10 +1662,21 @@ export default function GameCanvas() {
           // Phase 1 (hp 21-30): spray only; Phase 2 (hp 11-20): bombs only; Phase 3 (hp 1-10): stomp only
           const nextAttack: "spray" | "bombs" | "stomp" =
             boss.hp > 20 ? "spray" : boss.hp > 10 ? "bombs" : "stomp";
-          boss.attackType = nextAttack;
+          // Enter windup before the attack
+          boss.pendingAttack = nextAttack;
+          boss.attackType = "windup";
           boss.attackTimer = 0;
           boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
-          if (boss.attackType === "stomp") {
+        }
+      } else if (boss.attackType === "windup") {
+        // 30-frame telegraphed wind-up: boss stops, flashes, crouches
+        boss.vx *= 0.85; // slow to a stop
+        if (boss.attackTimer >= 30) {
+          const next = boss.pendingAttack!;
+          boss.attackType = next;
+          boss.attackTimer = 0;
+          boss.pendingAttack = null;
+          if (next === "stomp") {
             boss.stompRising = true;
             boss.stompTargetX = gs.px;
             boss.stompPasses = 2;
@@ -1645,6 +1719,7 @@ export default function GameCanvas() {
           boss.sprayParticles = [];
           boss.attackType = "idle";
           boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
+          boss.vulnerableTimer = 90; // weak point window opens
         }
       } else if (boss.attackType === "bombs") {
         // Spawn 6 bombs at start
@@ -1694,6 +1769,7 @@ export default function GameCanvas() {
           boss.bombs = [];
           boss.attackType = "idle";
           boss.attackCooldown = 120 + Math.floor(Math.random() * 60);
+          boss.vulnerableTimer = 90;
         }
       } else if (boss.attackType === "stomp") {
         if (boss.stompRising) {
@@ -1732,9 +1808,12 @@ export default function GameCanvas() {
             }
             boss.attackType = "idle";
             boss.attackCooldown = 150;
+            boss.vulnerableTimer = 90;
           }
         }
       }
+
+      } // end freeze guard
 
       if (boss.x < 20) boss.x = 20;
       if (boss.x > BOSS_ROOM_W - boss.w - 20) boss.x = BOSS_ROOM_W - boss.w - 20;
@@ -1924,6 +2003,14 @@ export default function GameCanvas() {
   //  RENDER
   // ─────────────────────────────────────────────
   function renderGame(ctx: CanvasRenderingContext2D, gs: GameState, tick: number) {
+    // Phase-transition screen freeze: white flash overlay, skip drawing
+    if (gs.boss && gs.boss.freezeTimer > 0) {
+      const flashAlpha = gs.boss.freezeTimer / 4;
+      ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      return;
+    }
+
     // Screen shake
     const shaking = gs.shakeTimer > 0;
     if (shaking) {
