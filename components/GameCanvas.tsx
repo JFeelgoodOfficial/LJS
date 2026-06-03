@@ -96,6 +96,7 @@ interface GameState {
   collectedBoxes: boolean[];
   collectedLetters: string[];
   letterReveal: { letter: string; timer: number; maxTimer: number } | null;
+  pickupAnnounce: { text: string; color: string; timer: number } | null;
 
   px: number;
   py: number;
@@ -431,6 +432,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
     collectedBoxes: prevState?.collectedBoxes ?? [false, false, false],
     collectedLetters: prevState?.collectedLetters ?? [],
     letterReveal: null,
+    pickupAnnounce: null,
 
     px: level === 4 ? 120 : 80, py: GROUND_Y - 60,
     pvx: 0, pvy: 0,
@@ -578,6 +580,7 @@ function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate, tick: number
 }
 
 const WEAPON_COLORS: Record<string, string> = { rapid: "#00CFFF", double: "#AA44FF", big: "#FF4400", pierce: "#FFD700" };
+const WEAPON_NAMES: Record<string, string> = { rapid: "RAPID FIRE!", pierce: "PIERCE SHOT!" };
 const WEAPON_LABELS: Record<string, string> = { rapid: "R", double: "2", big: "B", pierce: "P" };
 
 function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: number, allFrames?: Record<string, (HTMLImageElement | null)[]>) {
@@ -1508,6 +1511,33 @@ export default function GameCanvas() {
           if (bl.hp <= 0) { bl.broken = true; spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 12, 5); gs.score += 50; audio.playHit(); }
         }
       });
+      // Bullet hits weapon pickup — explode and collect
+      gs.weaponPickups.forEach((p) => {
+        if (p.collected || !b.active) return;
+        if (rectsOverlap(bRect, { x: p.x, y: p.y, w: p.w, h: p.h })) {
+          p.collected = true;
+          b.active = false;
+          gs.activeWeapon = { type: p.type, shotsLeft: WEAPON_SHOTS[p.type] };
+          const col = WEAPON_COLORS[p.type];
+          spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, col, 20, 6);
+          spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, "#FFFFFF", 8, 4);
+          gs.pickupAnnounce = { text: WEAPON_NAMES[p.type] ?? "WEAPON UP!", color: col, timer: 150 };
+          audio.playCollect();
+        }
+      });
+      // Bullet hits ammo crate — explode and collect
+      gs.ammoCrates.forEach((c) => {
+        if (c.collected || !b.active) return;
+        if (rectsOverlap(bRect, { x: c.x, y: c.y, w: c.w, h: c.h })) {
+          c.collected = true;
+          b.active = false;
+          if (gs.ammo !== Infinity) gs.ammo += 10;
+          spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FF8C00", 20, 6);
+          spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FFD700", 8, 4);
+          audio.playCollect();
+        }
+      });
+
       gs.enemies.forEach((en) => {
         if (!en.active || !b.active) return;
         if (Math.abs(b.x - en.x) > 60 || Math.abs(b.y - en.y) > 60) return;
@@ -1857,7 +1887,12 @@ export default function GameCanvas() {
       if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: c.x, y: c.y, w: c.w, h: c.h })) {
         c.collected = true;
         if (gs.ammo !== Infinity) gs.ammo += 10;
-        spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FF8C00", 8, 3);
+        // Bigger explosion if jumped on (falling) vs walking into
+        const isJump = gs.pvy > 1 && gs.py + 38 <= c.y + 8;
+        const count = isJump ? 22 : 10;
+        spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FF8C00", count, isJump ? 7 : 4);
+        spawnParticles(gs.particles, c.x + c.w / 2, c.y + c.h / 2, "#FFD700", isJump ? 10 : 4, 5);
+        if (isJump) gs.pvy = -8; // small bounce
         audio.playCollect();
       }
     });
@@ -1868,7 +1903,13 @@ export default function GameCanvas() {
       if (rectsOverlap({ x: gs.px + 2, y: gs.py, w: 28, h: 40 }, { x: p.x, y: p.y, w: p.w, h: p.h })) {
         p.collected = true;
         gs.activeWeapon = { type: p.type, shotsLeft: WEAPON_SHOTS[p.type] };
-        spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, WEAPON_COLORS[p.type], 12, 4);
+        const col = WEAPON_COLORS[p.type];
+        const isJump = gs.pvy > 1 && gs.py + 38 <= p.y + 8;
+        const count = isJump ? 24 : 12;
+        spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, col, count, isJump ? 7 : 4);
+        spawnParticles(gs.particles, p.x + p.w / 2, p.y + p.h / 2, "#FFFFFF", isJump ? 10 : 4, 5);
+        if (isJump) gs.pvy = -8;
+        gs.pickupAnnounce = { text: WEAPON_NAMES[p.type] ?? "WEAPON UP!", color: col, timer: 150 };
         audio.playCollect();
       }
     });
@@ -1965,6 +2006,10 @@ export default function GameCanvas() {
     if (gs.letterReveal) {
       gs.letterReveal.timer--;
       if (gs.letterReveal.timer <= 0) gs.letterReveal = null;
+    }
+    if (gs.pickupAnnounce) {
+      gs.pickupAnnounce.timer--;
+      if (gs.pickupAnnounce.timer <= 0) gs.pickupAnnounce = null;
     }
 
     if (gs.shakeTimer > 0) gs.shakeTimer--;
@@ -2200,6 +2245,32 @@ export default function GameCanvas() {
 
 
     if (gs.letterReveal) drawLetterReveal(ctx, gs.letterReveal, tick);
+
+    // Weapon pickup announcement banner
+    if (gs.pickupAnnounce) {
+      const ann = gs.pickupAnnounce;
+      const maxT = 150;
+      const slideIn = Math.min(1, (maxT - ann.timer) / 10);
+      const fadeOut = ann.timer < 40 ? ann.timer / 40 : 1;
+      const alpha = slideIn * fadeOut;
+      const yOff = (1 - slideIn) * -30;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = "center";
+      // Background pill
+      ctx.fillStyle = "#000";
+      const tw = ctx.measureText(ann.text).width + 40;
+      ctx.fillRect(CANVAS_W / 2 - tw / 2, 95 + yOff, tw, 26);
+      ctx.strokeStyle = ann.color; ctx.lineWidth = 2;
+      ctx.strokeRect(CANVAS_W / 2 - tw / 2, 95 + yOff, tw, 26);
+      // Text
+      ctx.fillStyle = ann.color;
+      ctx.font = '11px "Press Start 2P", cursive';
+      ctx.shadowColor = ann.color; ctx.shadowBlur = 10;
+      ctx.fillText(ann.text, CANVAS_W / 2, 113 + yOff);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
 
     if (gs.level !== 4) drawHUDOverlay(ctx, gs.level, gs.scrollX, gs.levelLength);
 
