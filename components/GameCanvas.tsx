@@ -1660,8 +1660,11 @@ export default function GameCanvas() {
           }
         }
       });
-      // Boss bullet collision (level 4 only)
+      // Boss bullet collision (level 4 only) — only if boss is on screen
       if (gs.level === 4 && gs.l4Phase === "boss" && gs.boss && gs.boss.active && !gs.boss.defeated && b.active) {
+        const bossScreenX = gs.boss.x - gs.cameraX;
+        const bossOnScreen = bossScreenX + gs.boss.w * 2 > 0 && bossScreenX < CANVAS_W;
+        if (bossOnScreen) {
         const bw = (b as Bullet & { big?: boolean }).big ? 16 : 10;
         const bh = (b as Bullet & { big?: boolean }).big ? 10 : 5;
         const dmg = (b as Bullet & { big?: boolean }).big ? 2 : 1;
@@ -1681,6 +1684,7 @@ export default function GameCanvas() {
             gs.boss.defeated = true;
             gs.boss.defeatedTimer = 0;
           }
+        }
         }
       }
     });
