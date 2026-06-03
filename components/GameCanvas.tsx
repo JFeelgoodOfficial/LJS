@@ -66,6 +66,7 @@ interface Boss {
   active: boolean;
   onGround: boolean;
   defeated: boolean;
+  hitInvincible: number;  // iframes after being hit
   chargeTimer: number;
   jumpTimer: number;
   chargeActive: boolean;
@@ -554,6 +555,7 @@ function initGameState(level: number, prevState?: Partial<GameState>): GameState
       stompY: GROUND_Y - 80,
       stompPasses: 0,
       defeatedTimer: 0,
+      hitInvincible: 0,
       vulnerableTimer: 0,
       freezeTimer: 0,
       lastPhase: 1,
@@ -1838,11 +1840,12 @@ export default function GameCanvas() {
         const hitH = phase3Hit ? gs.boss.h * 2 : gs.boss.h;
         const hitX = gs.boss.x - (phase3Hit ? gs.boss.w / 2 : 0);
         const hitY = gs.boss.y - (phase3Hit ? gs.boss.h : 0);
-        if (rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: hitX, y: hitY, w: hitW, h: hitH })) {
+        if (gs.boss.hitInvincible === 0 && rectsOverlap({ x: b.x, y: b.y, w: bw, h: bh }, { x: hitX, y: hitY, w: hitW, h: hitH })) {
           const vulnerable = gs.boss.vulnerableTimer > 0;
           const actualDmg = vulnerable ? dmg * 2 : dmg;
           gs.boss.hp -= actualDmg;
-          if (!(b as Bullet & { pierce?: boolean }).pierce) b.active = false;
+          gs.boss.hitInvincible = 20; // 20-frame cooldown between hits (~0.33s)
+          b.active = false; // always deactivate on boss hit (pierce doesn't chain on boss)
           spawnParticles(gs.particles, b.x, b.y, vulnerable ? "#FFD700" : "#CC0000", vulnerable ? 10 : 6, vulnerable ? 5 : 3);
           gs.score += vulnerable ? 100 : 50;
           if (gs.boss.hp <= 0 && !gs.boss.defeated) {
@@ -1960,6 +1963,7 @@ export default function GameCanvas() {
 
       // Tick down vulnerable window
       if (boss.vulnerableTimer > 0) boss.vulnerableTimer--;
+      if (boss.hitInvincible > 0) boss.hitInvincible--;
 
       if (boss.attackType === "idle") {
         // Patrol slowly
