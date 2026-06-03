@@ -1988,6 +1988,9 @@ export default function GameCanvas() {
         gs.py = GROUND_Y - 60;
         gs.pvx = 0; gs.pvy = 0;
         gs.cameraX = 0;
+        gs.platforms = []; // clear boss-room platforms so nothing blocks the pedestal
+        gs.blocks = [];
+        gs.enemies = [];
       }
     }
 
