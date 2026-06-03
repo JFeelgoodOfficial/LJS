@@ -213,7 +213,11 @@ function spawnParticles(particles: Particle[], x: number, y: number, color: stri
 }
 
 function makeEnemy(x: number, y: number, vx: number, hp: number, type: "walker" | "jumper" | "flyer"): Enemy {
-  return { x, y, w: 28, h: 28, vx, vy: 0, hp, onGround: false, active: true, type, jumpTimer: Math.floor(Math.random() * 90), sinOffset: Math.random() * Math.PI * 2 };
+  const sinOffset = Math.random(); // for flyers: scales dive interval randomness (0-1)
+  const startY = type === "flyer" ? GROUND_Y - 160 : y;
+  // flyers start with a random cruising countdown (-40 to -160 so dives are staggered)
+  const jumpTimer = type === "flyer" ? -(40 + Math.floor(sinOffset * 80)) : Math.floor(Math.random() * 90);
+  return { x, y: startY, w: 28, h: 28, vx, vy: 0, hp, onGround: false, active: true, type, jumpTimer, sinOffset };
 }
 
 const WEAPON_TYPES: Array<"rapid" | "double" | "big" | "pierce"> = ["rapid", "pierce"];
@@ -1503,9 +1507,30 @@ export default function GameCanvas() {
       if (!en.active) return;
 
       if (en.type === "flyer") {
-        // Flyers ignore gravity, oscillate vertically
+        // Flyers cruise at fixed sky height, randomly dive to ground and back up
+        const CRUISE_Y = GROUND_Y - 160;
+        const DIVE_Y = GROUND_Y - en.h - 4;
         en.x += en.vx;
-        en.y += Math.sin(tick * 0.05 + en.sinOffset) * 1.2;
+        // jumpTimer: 0 = cruising (countdown to next dive), 1-40 = diving down, 41-80 = rising up
+        if (en.jumpTimer <= 0) {
+          // snap to cruise height
+          en.y += (CRUISE_Y - en.y) * 0.15;
+          en.jumpTimer--;
+          if (en.jumpTimer <= -(100 + Math.floor(en.sinOffset * 80))) {
+            en.jumpTimer = 1; // start dive
+          }
+        } else if (en.jumpTimer <= 40) {
+          // diving down
+          en.y += (DIVE_Y - en.y) * 0.12;
+          en.jumpTimer++;
+        } else if (en.jumpTimer <= 80) {
+          // rising back up
+          en.y += (CRUISE_Y - en.y) * 0.12;
+          en.jumpTimer++;
+        } else {
+          // dive complete, reset to cruising countdown
+          en.jumpTimer = 0;
+        }
       } else {
         // Walkers and jumpers obey gravity
         en.vy += GRAVITY; en.x += en.vx; en.y += en.vy;
