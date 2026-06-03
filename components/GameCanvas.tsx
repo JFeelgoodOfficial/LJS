@@ -154,8 +154,15 @@ interface GameState {
 // ─────────────────────────────────────────────
 function createAudio() {
   let ctx: AudioContext | null = null;
+  let musicGain: GainNode | null = null;
+
   function getCtx() {
-    if (!ctx) ctx = new AudioContext();
+    if (!ctx) {
+      ctx = new AudioContext();
+      musicGain = ctx.createGain();
+      musicGain.gain.value = 0.22;
+      musicGain.connect(ctx.destination);
+    }
     if (ctx.state === "suspended") ctx.resume();
     return ctx;
   }
@@ -199,7 +206,157 @@ function createAudio() {
   function playEnemyDie() { playTone(200, 0.12, "sawtooth", 0.13); }
   function playTypeTick(freq: number) { playTone(freq, 0.08, "square", 0.08); }
 
-  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie, playTone, playTypeTick };
+  // ── Music sequencer ──
+  type MNote = [number, number]; // [freq (0=rest), beats]
+  interface MPat { bpm: number; melody: MNote[]; bass: MNote[]; }
+  const mf = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
+  const R = 0;
+
+  const PATTERNS: Record<number, MPat> = {
+    // Level 1 — Forest Zone: bright C major adventure, hopeful
+    1: { bpm: 118,
+      melody: [
+        [mf(64),1],[mf(67),1],[mf(72),1],[mf(71),1],
+        [mf(69),2],[mf(67),2],
+        [mf(64),1],[mf(62),1],[mf(64),1],[mf(67),1],
+        [mf(69),2],[R,2],
+        [mf(67),1],[mf(69),1],[mf(71),1],[mf(72),1],
+        [mf(74),2],[mf(72),2],
+        [mf(71),1],[mf(69),1],[mf(67),1],[mf(64),1],
+        [mf(60),4],
+      ],
+      bass: [
+        [mf(48),2],[mf(55),2],[mf(53),2],[mf(55),2],
+        [mf(57),2],[mf(52),2],[mf(50),2],[mf(55),2],
+        [mf(48),2],[mf(55),2],[mf(53),2],[mf(55),2],
+        [mf(52),2],[mf(50),2],[mf(48),4],
+      ],
+    },
+    // Level 2 — Dungeon Zone: A natural minor, dark and mysterious
+    2: { bpm: 95,
+      melody: [
+        [mf(69),1],[R,0.5],[mf(69),0.5],[mf(67),1],[mf(65),1],
+        [mf(64),2],[R,2],
+        [mf(65),1],[mf(67),1],[mf(69),1],[mf(72),1],
+        [mf(71),2],[mf(69),2],
+        [mf(67),1],[mf(65),1],[mf(64),1],[mf(62),1],
+        [mf(60),2],[R,2],
+        [mf(64),1],[mf(65),1],[mf(67),1],[mf(64),1],
+        [mf(69),4],
+      ],
+      bass: [
+        [mf(45),2],[mf(52),2],[mf(45),2],[mf(50),2],
+        [mf(45),2],[mf(52),1],[mf(55),1],[mf(45),4],
+        [mf(48),2],[mf(52),2],[mf(45),2],[mf(52),2],
+        [mf(50),2],[mf(48),2],[mf(45),4],
+      ],
+    },
+    // Level 3 — Lava Zone: D harmonic minor, fast and urgent
+    3: { bpm: 150,
+      melody: [
+        [mf(62),0.5],[mf(64),0.5],[mf(65),0.5],[mf(69),0.5],[mf(74),1],[mf(69),1],
+        [mf(70),0.5],[mf(69),0.5],[mf(67),0.5],[mf(65),0.5],[mf(64),1],[R,1],
+        [mf(62),0.5],[mf(65),0.5],[mf(69),0.5],[mf(74),0.5],[mf(76),1],[mf(74),1],
+        [mf(73),2],[mf(69),2],
+        [mf(65),1],[mf(67),0.5],[mf(69),0.5],[mf(70),1],[mf(69),1],
+        [mf(67),1],[mf(65),1],[mf(64),2],
+        [mf(62),1],[mf(57),1],[mf(62),1],[mf(64),1],
+        [mf(65),2],[mf(62),2],
+      ],
+      bass: [
+        [mf(50),1],[R,0.5],[mf(50),0.5],[mf(57),1],[R,1],
+        [mf(46),1],[R,0.5],[mf(46),0.5],[mf(53),1],[R,1],
+        [mf(50),2],[mf(57),2],
+        [mf(49),1],[mf(50),1],[mf(45),2],
+        [mf(50),1],[R,0.5],[mf(50),0.5],[mf(57),1],[R,1],
+        [mf(48),1],[mf(50),1],[mf(53),2],
+        [mf(50),2],[mf(45),2],
+        [mf(49),2],[mf(50),2],
+      ],
+    },
+    // Level 4 — Boss: E Phrygian dominant, epic and threatening
+    4: { bpm: 145,
+      melody: [
+        [mf(64),1],[mf(65),0.5],[mf(64),0.5],[mf(62),1],[mf(64),1],
+        [mf(67),1],[mf(68),1],[mf(67),2],
+        [mf(65),1],[mf(64),0.5],[mf(62),0.5],[mf(60),1],[mf(59),1],
+        [mf(64),2],[R,2],
+        [mf(71),1],[mf(72),1],[mf(71),1],[mf(69),1],
+        [mf(67),1],[mf(68),0.5],[mf(67),0.5],[mf(65),1],[mf(64),1],
+        [mf(62),1],[mf(64),1],[mf(65),1],[mf(67),1],
+        [mf(64),4],
+      ],
+      bass: [
+        [mf(40),1],[R,0.5],[mf(40),0.5],[mf(40),1],[R,1],
+        [mf(41),1],[R,1],[mf(40),2],
+        [mf(45),1],[R,0.5],[mf(43),0.5],[mf(41),1],[mf(40),1],
+        [mf(40),2],[R,2],
+        [mf(40),1],[R,0.5],[mf(40),0.5],[mf(40),1],[R,1],
+        [mf(41),1],[R,1],[mf(40),2],
+        [mf(43),1],[mf(41),1],[mf(40),2],
+        [mf(40),4],
+      ],
+    },
+  };
+
+  let musicTimer: ReturnType<typeof setTimeout> | null = null;
+  let melodyStep = 0, bassStep = 0;
+  let melodyTime = 0, bassTime = 0;
+  let activePat: MPat | null = null;
+
+  function schedNote(freq: number, t: number, dur: number, vol: number, type: OscillatorType) {
+    try {
+      const c = ctx!; const mg = musicGain!;
+      if (!freq || !c || !mg) return;
+      const osc = c.createOscillator();
+      const g = c.createGain();
+      osc.connect(g); g.connect(mg);
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.01);
+      g.gain.setValueAtTime(vol, t + dur * 0.65);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.9);
+      osc.start(t); osc.stop(t + dur);
+    } catch {}
+  }
+
+  function musicScheduler() {
+    if (!activePat || !ctx) return;
+    const { bpm, melody, bass } = activePat;
+    const beat = 60 / bpm;
+    const ahead = ctx.currentTime + 0.15;
+    while (melodyTime < ahead) {
+      const [f, b] = melody[melodyStep % melody.length];
+      schedNote(f, melodyTime, b * beat * 0.88, 0.07, "square");
+      melodyTime += b * beat;
+      if (++melodyStep >= melody.length) melodyStep = 0;
+    }
+    while (bassTime < ahead) {
+      const [f, b] = bass[bassStep % bass.length];
+      schedNote(f, bassTime, b * beat * 0.82, 0.045, "triangle");
+      bassTime += b * beat;
+      if (++bassStep >= bass.length) bassStep = 0;
+    }
+    musicTimer = setTimeout(musicScheduler, 50);
+  }
+
+  function startMusic(level: number) {
+    stopMusic();
+    const c = getCtx();
+    activePat = PATTERNS[level] ?? PATTERNS[1];
+    melodyStep = 0; bassStep = 0;
+    melodyTime = c.currentTime + 0.1;
+    bassTime   = c.currentTime + 0.1;
+    musicScheduler();
+  }
+
+  function stopMusic() {
+    if (musicTimer) { clearTimeout(musicTimer); musicTimer = null; }
+    activePat = null;
+  }
+
+  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie, playTone, playTypeTick, startMusic, stopMusic };
 }
 
 // ─────────────────────────────────────────────
@@ -1279,6 +1436,7 @@ export default function GameCanvas() {
     winRevealIndexRef.current = 0;
     setGamePhase("playing");
     setHudData({ score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo });
+    audioRef.current?.startMusic(level);
   }
 
   function canvasCoords(clientX: number, clientY: number): { cx: number; cy: number } {
@@ -1456,6 +1614,13 @@ export default function GameCanvas() {
     return () => cancelAnimationFrame(animFrameRef.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Stop music on death / win
+  useEffect(() => {
+    if (gamePhase === "dead" || gamePhase === "win") {
+      audioRef.current?.stopMusic();
+    }
+  }, [gamePhase]);
 
   // ─────────────────────────────────────────────
   //  UPDATE
