@@ -1123,7 +1123,17 @@ export default function GameCanvas() {
   const [gamePhase, setGamePhase] = useState<"title" | "playing" | "dead" | "levelComplete" | "win">("title");
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [highScore, setHighScore] = useState(0);
+  const [isPortrait, setIsPortrait] = useState(false);
   const isIOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
+
+  // Track orientation
+  useEffect(() => {
+    function check() { setIsPortrait(window.innerHeight > window.innerWidth); }
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("orientationchange", check);
+    return () => { window.removeEventListener("resize", check); window.removeEventListener("orientationchange", check); };
+  }, []);
 
   // Load high score on mount
   useEffect(() => {
@@ -2470,6 +2480,23 @@ export default function GameCanvas() {
         paddingRight: "env(safe-area-inset-right)",
       }}
     >
+      {/* Portrait-mode rotate prompt */}
+      {isPortrait && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 200,
+          background: "#0a0a0a",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "24px",
+        }}>
+          <div style={{ fontSize: "64px", animation: "spin90 1.8s ease-in-out infinite" }}>📱</div>
+          <p style={{
+            fontFamily: '"Press Start 2P", cursive', fontSize: "10px",
+            color: "#FFD700", textAlign: "center", lineHeight: "2", padding: "0 24px",
+          }}>
+            ROTATE YOUR<br />DEVICE TO PLAY
+          </p>
+          <style>{`@keyframes spin90 { 0%,100%{transform:rotate(0deg)} 40%,60%{transform:rotate(90deg)} }`}</style>
+        </div>
+      )}
       {/* Fullscreen button — hidden on iOS where requestFullscreen is unsupported */}
       {!isIOS && <button
         onClick={() => {
@@ -2503,11 +2530,11 @@ export default function GameCanvas() {
       <div
         className="relative"
         style={{
-          /* fit canvas within safe-area-aware viewport in both orientations */
+          /* fill landscape viewport edge-to-edge, letterbox if needed */
           width: `min(calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right)), calc((100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * ${CANVAS_W / CANVAS_H}))`,
           aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
+          maxWidth: "100%",
           boxShadow: "0 0 40px rgba(255,215,0,0.15), 0 0 80px rgba(0,0,0,0.8)",
-          border: "3px solid #333",
         }}
       >
         {gamePhase === "playing" && (
@@ -2654,6 +2681,18 @@ export default function GameCanvas() {
           style={{ fontFamily: '"Press Start 2P", cursive', fontSize: "7px", color: "rgba(255,255,255,0.3)" }}
         >
           ← → MOVE &nbsp;|&nbsp; ↑ / W JUMP &nbsp;|&nbsp; SPACE / CLICK SHOOT
+        </div>
+      )}
+
+      {/* iOS tip: add to home screen for more screen space */}
+      {isIOS && gamePhase === "title" && !isPortrait && (
+        <div style={{
+          position: "absolute", bottom: "6px", left: 0, right: 0,
+          textAlign: "center", pointerEvents: "none",
+          fontFamily: '"Press Start 2P", cursive', fontSize: "6px",
+          color: "rgba(255,255,255,0.28)",
+        }}>
+          TIP: ADD TO HOME SCREEN FOR MORE SPACE
         </div>
       )}
     </div>
