@@ -1515,6 +1515,25 @@ export default function GameCanvas() {
       }
     });
 
+    // Player stomps blocks — landing on top explodes the block
+    gs.blocks.forEach((bl) => {
+      if (bl.broken) return;
+      const pRect: Rect = { x: gs.px + 2, y: gs.py, w: 28, h: 40 };
+      const blRect: Rect = { x: bl.x, y: bl.y, w: bl.w, h: bl.h };
+      if (rectsOverlap(pRect, blRect) && gs.pvy >= 0 && gs.py + 40 - gs.pvy <= bl.y + 4) {
+        // Land on top
+        gs.py = bl.y - 40; gs.pvy = 0; gs.pOnGround = true;
+        bl.broken = true;
+        spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 18, 6);
+        spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, "#FFFFFF", 6, 4);
+        gs.score += 50; audio.playHit();
+      } else if (rectsOverlap(pRect, blRect)) {
+        // Side collision — push player out
+        if (gs.px + 16 < bl.x + bl.w / 2) gs.px = bl.x - 30;
+        else gs.px = bl.x + bl.w + 2;
+      }
+    });
+
     // Pedestal box collision — landing on top fills the box and reveals the letter
     if (gs.level === 4 && gs.l4Phase === "pedestal") {
       gs.pedestalSlots.forEach((slot) => {
@@ -1582,7 +1601,12 @@ export default function GameCanvas() {
           bl.hp -= b.big ? 2 : 1;
           if (!b.pierce) b.active = false;
           spawnParticles(gs.particles, b.x, b.y, bl.color, 6, 3); gs.score += 10;
-          if (bl.hp <= 0) { bl.broken = true; spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 12, 5); gs.score += 50; audio.playHit(); }
+          if (bl.hp <= 0) {
+            bl.broken = true;
+            spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, bl.color, 18, 6);
+            spawnParticles(gs.particles, bl.x + bl.w / 2, bl.y + bl.h / 2, "#FFFFFF", 6, 4);
+            gs.score += 50; audio.playHit();
+          }
         }
       });
       // Bullet hits weapon pickup — explode and collect
