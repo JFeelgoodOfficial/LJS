@@ -11,6 +11,22 @@ const CANVAS_H = 450;
 // Backgrounds are always blitted at this size (see renderGame / boss room).
 // Sources are 1672x941, so we pre-scale once on load instead of resampling
 // a 1.5-megapixel image three times per frame.
+// The simulation runs at a fixed 60 steps/sec. Every physics constant in this
+// file is expressed per-step (GRAVITY, JUMP_FORCE, and every timer decremented
+// by 1), so the loop must not advance them once per rendered frame - that made
+// the game run at double speed on a 120Hz display and in slow motion whenever
+// the browser throttled rAF.
+const STEP_MS = 1000 / 60;
+// A gap longer than this (backgrounded tab, stalled main thread) is treated as
+// a single step rather than simulated in full: catching up would teleport the
+// player through hazards. This matches the old one-step-per-callback behaviour.
+const MAX_FRAME_GAP_MS = 100;
+// Safety valve so a slow device can never spiral into ever-longer catch-ups.
+const MAX_STEPS_PER_FRAME = 5;
+// Frame deltas never land exactly on STEP_MS - vsync jitters, and accumulating
+// floats drifts - so a frame arriving a hair early must still count as a step.
+// Without this a display running at exactly 60Hz intermittently drops one.
+const STEP_TOLERANCE_MS = 0.5;
 const BG_TILE_W = 850;
 const BG_TILE_H = 400;
 const GRAVITY = 0.55;
@@ -1593,9 +1609,32 @@ export default function GameCanvas() {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
 
-    function gameLoop() {
+    let lastFrameMs = -1;
+    let accumulator = 0;
+
+    function gameLoop(nowMs: number) {
       animFrameRef.current = requestAnimationFrame(gameLoop);
-      tickRef.current++;
+
+      // ── Advance the simulation on wall-clock time, not frame count ──
+      if (lastFrameMs < 0) lastFrameMs = nowMs;
+      let elapsed = nowMs - lastFrameMs;
+      lastFrameMs = nowMs;
+      if (elapsed > MAX_FRAME_GAP_MS) elapsed = STEP_MS;
+      accumulator += elapsed;
+
+      let steps = 0;
+      while (accumulator >= STEP_MS - STEP_TOLERANCE_MS && steps < MAX_STEPS_PER_FRAME) {
+        accumulator = Math.max(0, accumulator - STEP_MS);
+        steps++;
+        tickRef.current++;
+        // tick drives the title/dead/win screen animations too, so it advances
+        // every step regardless of phase; only live play needs updateGame.
+        const g = stateRef.current;
+        if (g && g.phase === "playing") updateGame(g, tickRef.current);
+      }
+      if (steps === MAX_STEPS_PER_FRAME) accumulator = 0;
+
+      // ── Render once per rendered frame, whatever the step count was ──
       const tick = tickRef.current;
       const gs   = stateRef.current;
       // Kept: renderGame translates the context for screen shake, so without
@@ -1607,7 +1646,6 @@ export default function GameCanvas() {
       if (gs.phase === "dead")             { drawDeadScreen(ctx, gs, tick); return; }
       if (gs.phase === "levelComplete")    { drawLevelCompleteScreen(ctx, gs, tick); return; }
 
-      updateGame(gs, tick);
       renderGame(ctx, gs, tick);
     }
 
