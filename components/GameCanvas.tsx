@@ -8,6 +8,11 @@ import HUD from "./HUD";
 // ─────────────────────────────────────────────
 const CANVAS_W = 800;
 const CANVAS_H = 450;
+// Backgrounds are always blitted at this size (see renderGame / boss room).
+// Sources are 1672x941, so we pre-scale once on load instead of resampling
+// a 1.5-megapixel image three times per frame.
+const BG_TILE_W = 850;
+const BG_TILE_H = 400;
 const GRAVITY = 0.55;
 const JUMP_FORCE = -13;
 const PLAYER_SPEED = 4;
@@ -357,12 +362,31 @@ function createAudio() {
     activePat = null;
   }
 
-  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie, playTone, playTypeTick, startMusic, stopMusic };
+  // Without this the 50ms scheduler loop keeps queueing oscillators forever
+  // after the component unmounts, and the AudioContext is never released.
+  function dispose() {
+    stopMusic();
+    if (ctx) { ctx.close().catch(() => {}); ctx = null; musicGain = null; }
+  }
+
+  return { playJump, playShoot, playHit, playCollect, playDeath, playLevelUp, playWin, playPlace, playEnemyDie, playTone, playTypeTick, startMusic, stopMusic, dispose };
 }
 
 // ─────────────────────────────────────────────
 //  HELPERS
 // ─────────────────────────────────────────────
+// Order-preserving in-place compaction. Array.prototype.filter allocated a new
+// array every frame for each of five collections even when nothing was culled;
+// this allocates nothing and keeps the original ordering (which draw z-order and
+// collision resolution both depend on), unlike a swap-removal.
+function cullInPlace<T>(arr: T[], keep: (item: T) => boolean) {
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) {
+    if (keep(arr[i])) { if (w !== i) arr[w] = arr[i]; w++; }
+  }
+  arr.length = w;
+}
+
 function rectsOverlap(a: Rect, b: Rect) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
@@ -741,6 +765,9 @@ function drawAmmoCrate(ctx: CanvasRenderingContext2D, c: AmmoCrate, tick: number
 const WEAPON_COLORS: Record<string, string> = { rapid: "#00CFFF", double: "#AA44FF", big: "#FF4400", pierce: "#FFD700" };
 const WEAPON_NAMES: Record<string, string> = { rapid: "RAPID FIRE!", pierce: "PIERCE SHOT!" };
 const WEAPON_LABELS: Record<string, string> = { rapid: "R", double: "2", big: "B", pierce: "P" };
+const DEATH_CAUSES: Record<string, string> = { walker: "STOMPED BY A WALKER", jumper: "AMBUSHED BY A JUMPER", flyer: "SWOOPED BY A FLYER" };
+const LEVEL_NAMES = ["FOREST ZONE", "DUNGEON ZONE", "LAVA ZONE", "FINAL CHAMBER"];
+const CONFETTI_COLORS = ["#FFD700", "#FF8C00", "#00FF00", "#00FFFF", "#FF69B4"];
 
 function drawWeaponPickup(ctx: CanvasRenderingContext2D, p: WeaponPickup, tick: number, allFrames?: Record<string, (HTMLImageElement | null)[]>) {
   if (p.collected) return;
@@ -1242,66 +1269,15 @@ function drawHUDOverlay(ctx: CanvasRenderingContext2D, level: number, scrollX: n
 // ─────────────────────────────────────────────
 //  TOUCH CONTROLS OVERLAY — drawn ON the canvas (kept for non-HTML-overlay path)
 // ─────────────────────────────────────────────
-function drawTouchControls(ctx: CanvasRenderingContext2D, keys: Record<string, boolean>) {
-  const buttons = [
-    { key: "ArrowLeft",  label: "◄", zone: TC.LEFT  },
-    { key: "ArrowRight", label: "►", zone: TC.RIGHT },
-    { key: "ArrowUp",    label: "▲", zone: TC.JUMP  },
-    { key: "Space",      label: "🔫", zone: TC.SHOOT },
-  ];
-
-  buttons.forEach(({ key, label, zone }) => {
-    const pressed = !!keys[key];
-    const isShoot = key === "Space";
-
-    ctx.save();
-    ctx.globalAlpha = pressed ? 0.85 : 0.45;
-
-    if (isShoot) {
-      const cx = zone.x + zone.w / 2;
-      const cy = zone.y + zone.h / 2;
-      const r  = zone.w / 2;
-      ctx.fillStyle = pressed ? "#FF6600" : "#CC3300";
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = pressed ? "#FFD700" : "#FF8800";
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(cx, cy, r - 2, 0, Math.PI * 2); ctx.stroke();
-    } else {
-      const r = 10;
-      const { x, y, w, h } = zone;
-      ctx.fillStyle = pressed ? "#4488FF" : "#224488";
-      ctx.beginPath();
-      ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
-      ctx.arcTo(x + w, y, x + w, y + r, r);
-      ctx.lineTo(x + w, y + h - r);
-      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-      ctx.lineTo(x + r, y + h);
-      ctx.arcTo(x, y + h, x, y + h - r, r);
-      ctx.lineTo(x, y + r);
-      ctx.arcTo(x, y, x + r, y, r);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = pressed ? "#88AAFF" : "#4466AA";
-      ctx.lineWidth = 2; ctx.stroke();
-    }
-
-    ctx.globalAlpha = pressed ? 1.0 : 0.7;
-    ctx.fillStyle = "#ffffff";
-    const isEmoji = label === "🔫";
-    ctx.font = isEmoji
-      ? `${zone.h * 0.5}px sans-serif`
-      : `bold ${Math.min(zone.w, zone.h) * 0.45}px "Press Start 2P", cursive`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, zone.x + zone.w / 2, zone.y + zone.h / 2);
-    ctx.textBaseline = "alphabetic";
-    ctx.restore();
-  });
+function prescale(img: HTMLImageElement, w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const cx = c.getContext("2d")!;
+  cx.imageSmoothingEnabled = false;   // keep the nearest-neighbour pixel-art look
+  cx.drawImage(img, 0, 0, w, h);
+  return c;
 }
 
-// ─────────────────────────────────────────────
-//  MAIN COMPONENT
-// ─────────────────────────────────────────────
 export default function GameCanvas() {
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const stateRef    = useRef<GameState | null>(null);
@@ -1313,8 +1289,8 @@ export default function GameCanvas() {
   const titleImgRef = useRef<HTMLImageElement | null>(null);
   const runFrameRefs = useRef<(HTMLImageElement | null)[]>(Array(6).fill(null));
   const fireFrameRef = useRef<HTMLImageElement | null>(null);
-  const bgImgRefs = useRef<(HTMLImageElement | null)[]>(Array(4).fill(null));
-  const pedestalBgRef = useRef<HTMLImageElement | null>(null);
+  const bgImgRefs = useRef<(HTMLCanvasElement | null)[]>(Array(4).fill(null));
+  const pedestalBgRef = useRef<HTMLCanvasElement | null>(null);
   const groundTileRefs = useRef<(HTMLImageElement | null)[]>(Array(4).fill(null));
   const enemyFrameRefs = useRef<Record<string, (HTMLImageElement | null)[]>>({
     walker: Array(6).fill(null),
@@ -1355,7 +1331,7 @@ export default function GameCanvas() {
 
   useEffect(() => {
     const img = new Image();
-    img.src = "/LJS-title.png";
+    img.src = "/LJS-title.webp";
     img.onload = () => { titleImgRef.current = img; };
   }, []);
 
@@ -1369,22 +1345,32 @@ export default function GameCanvas() {
     const fire = new Image();
     fire.src = "/run-frame-fire.png";
     fire.onload = () => { fireFrameRef.current = fire; };
-    for (let i = 0; i < 4; i++) {
-      const img = new Image();
-      img.src = `/lvl${i + 1}-background.webp`;
-      const idx = i;
-      img.onload = () => { bgImgRefs.current[idx] = img; };
-    }
-    const pedBg = new Image();
-    pedBg.src = "/lvl4-pedestal-background.webp";
-    pedBg.onload = () => { pedestalBgRef.current = pedBg; };
-
     const groundFiles = ["lvl1-tile_grass", "lvl2-tile_stone", "lvl3-tile_lava", "lvl4-tile_gold"];
-    groundFiles.forEach((name, i) => {
+
+    function loadBg(idx: number) {
       const img = new Image();
-      img.src = `/${name}.webp`;
-      img.onload = () => { groundTileRefs.current[i] = img; };
-    });
+      img.src = `/lvl${idx + 1}-background.webp`;
+      img.onload = () => { bgImgRefs.current[idx] = prescale(img, BG_TILE_W, BG_TILE_H); };
+    }
+    function loadGround(idx: number) {
+      const img = new Image();
+      img.src = `/${groundFiles[idx]}.webp`;
+      img.onload = () => { groundTileRefs.current[idx] = img; };
+    }
+
+    // Level 1 is needed immediately; the rest would only compete with it for
+    // bandwidth, so they wait until the browser is idle.
+    loadBg(0);
+    loadGround(0);
+
+    const loadRest = () => {
+      for (let i = 1; i < 4; i++) { loadBg(i); loadGround(i); }
+      const pedBg = new Image();
+      pedBg.src = "/lvl4-pedestal-background.webp";
+      pedBg.onload = () => { pedestalBgRef.current = prescale(pedBg, BG_TILE_W, BG_TILE_H); };
+    };
+    const ric = (window as any).requestIdleCallback;
+    const restHandle = ric ? ric(loadRest, { timeout: 3000 }) : window.setTimeout(loadRest, 600);
 
     const enemyTypes: Array<[string, string]> = [
       ["walker", "green_idle"],
@@ -1415,6 +1401,11 @@ export default function GameCanvas() {
         img.onload = () => { itemFrameRefs.current[key][idx] = img; };
       }
     });
+
+    return () => {
+      const cic = (window as any).cancelIdleCallback;
+      if (ric && cic) cic(restHandle); else clearTimeout(restHandle);
+    };
   }, []);
 
   function updateHighScore(score: number) {
@@ -1503,11 +1494,16 @@ export default function GameCanvas() {
       }
     }
 
-    window.addEventListener("keydown", (e) => onKey(e, true));
-    window.addEventListener("keyup",   (e) => onKey(e, false));
+    // These must be the *same* references passed to add and remove; the previous
+    // inline arrows meant removeEventListener was a silent no-op and the
+    // listeners outlived the component, pinning the whole first-render closure.
+    const onKeyDown = (e: KeyboardEvent) => onKey(e, true);
+    const onKeyUp   = (e: KeyboardEvent) => onKey(e, false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup",   onKeyUp);
     return () => {
-      window.removeEventListener("keydown", (e) => onKey(e, true));
-      window.removeEventListener("keyup",   (e) => onKey(e, false));
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup",   onKeyUp);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1519,8 +1515,9 @@ export default function GameCanvas() {
 
     function onTouchStart(e: TouchEvent) {
       e.preventDefault();
-      isTouchRef.current = true;
-      setIsTouchDevice(true);
+      // Only fire the state update on the first touch; this used to re-render
+      // the whole component on every touchstart.
+      if (!isTouchRef.current) { isTouchRef.current = true; setIsTouchDevice(true); }
       ensureAudio();
       const gs = stateRef.current;
       if (!gs) { startGame(1); return; }
@@ -1601,6 +1598,8 @@ export default function GameCanvas() {
       tickRef.current++;
       const tick = tickRef.current;
       const gs   = stateRef.current;
+      // Kept: renderGame translates the context for screen shake, so without
+      // this the offset repaint smears up to 4px of stale pixels at the edges.
       ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
       if (!gs || gs.phase === "title")     { drawTitleScreen(ctx, tick); return; }
@@ -1613,7 +1612,11 @@ export default function GameCanvas() {
     }
 
     animFrameRef.current = requestAnimationFrame(gameLoop);
-    return () => cancelAnimationFrame(animFrameRef.current);
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+      audioRef.current?.dispose();
+      audioRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1929,9 +1932,8 @@ export default function GameCanvas() {
           audio.playHit();
         }
       } else if (gs.pInvincible === 0 && rectsOverlap(playerRect, enRect)) {
-        const causeMap: Record<string, string> = { walker: "STOMPED BY A WALKER", jumper: "AMBUSHED BY A JUMPER", flyer: "SWOOPED BY A FLYER" };
         gs.lives--; gs.pInvincible = 90; gs.shakeTimer = 10; audio.playDeath();
-        gs.deathCause = causeMap[en.type] ?? "KILLED BY AN ENEMY";
+        gs.deathCause = DEATH_CAUSES[en.type] ?? "KILLED BY AN ENEMY";
         spawnParticles(gs.particles, gs.px + 16, gs.py + 20, "#ff0000", 10, 4);
         if (gs.lives <= 0) {
           updateHighScore(gs.score);
@@ -2276,11 +2278,21 @@ export default function GameCanvas() {
         gs.phase = "levelComplete"; gs.levelTransTimer = 0; setGamePhase("levelComplete"); audio.playLevelUp();
       }
 
-      gs.blocks    = gs.blocks.filter((b) => b.x > -TILE);
-      gs.platforms = gs.platforms.filter((p) => p.x > -200);
-      gs.enemies   = gs.enemies.filter((e) => e.x > -100);
-      gs.ammoCrates = gs.ammoCrates.filter((c) => c.x > -50);
-      gs.weaponPickups = gs.weaponPickups.filter((p) => p.x > -50);
+      // Drop anything scrolled off the left, and anything already dead. Dead
+      // entities were previously kept forever: every draw and collision loop
+      // early-returns on the flag, so they were pure per-frame overhead.
+      cullInPlace(gs.blocks,        (b) => b.x > -TILE && !b.broken);
+      cullInPlace(gs.platforms,     (p) => p.x > -200);
+      cullInPlace(gs.enemies,       (e) => e.x > -100 && e.active);
+      cullInPlace(gs.ammoCrates,    (c) => c.x > -50 && !c.collected);
+      cullInPlace(gs.weaponPickups, (p) => p.x > -50 && !p.collected);
+    } else {
+      // Boss room: positions are camera-relative, so culling by x would delete
+      // live entities. Drop dead ones only - nothing here ever scrolls away.
+      cullInPlace(gs.blocks,        (b) => !b.broken);
+      cullInPlace(gs.enemies,       (e) => e.active);
+      cullInPlace(gs.ammoCrates,    (c) => !c.collected);
+      cullInPlace(gs.weaponPickups, (p) => !p.collected);
     }
 
     if (gs.level === 3) {
@@ -2336,8 +2348,13 @@ export default function GameCanvas() {
 
     if (tick % 6 === 0) {
       setHudData((prev) => {
-        if (prev.score === gs.score && prev.level === gs.level && prev.lives === gs.lives && prev.ammo === gs.ammo) return prev;
-        return { score: gs.score, level: gs.level, lives: gs.lives, collectedBoxes: [...gs.collectedBoxes], ammo: gs.ammo };
+        const boxesSame = prev.collectedBoxes.length === gs.collectedBoxes.length
+          && prev.collectedBoxes.every((v, i) => v === gs.collectedBoxes[i]);
+        if (boxesSame && prev.score === gs.score && prev.level === gs.level && prev.lives === gs.lives && prev.ammo === gs.ammo) return prev;
+        // Reuse the previous array unless it really changed, otherwise HUD sees a
+        // new prop identity on every score tick and memo can never bail out.
+        return { score: gs.score, level: gs.level, lives: gs.lives,
+                 collectedBoxes: boxesSame ? prev.collectedBoxes : [...gs.collectedBoxes], ammo: gs.ammo };
       });
     }
   }
@@ -2364,7 +2381,7 @@ export default function GameCanvas() {
     if (gs.level === 4 && gs.l4Phase === "boss") {
       // Draw boss room background (tiled, screen-space offset by camera)
       const bossBg = bgImgRefs.current[3];
-      const bgTileW = 850; const bgH = 400;
+      const bgTileW = BG_TILE_W; const bgH = BG_TILE_H;
       if (bossBg) {
         const startTile = Math.floor(gs.cameraX / bgTileW);
         for (let t = startTile; t <= startTile + 2; t++) {
@@ -2484,7 +2501,7 @@ export default function GameCanvas() {
       }
     } else {
       // Normal rendering (levels 1-3 and level 4 pedestal)
-      const bgTileW = 850; const bgH = 400;
+      const bgTileW = BG_TILE_W; const bgH = BG_TILE_H;
       const activeBg = gs.level === 4 && gs.l4Phase === "pedestal"
         ? pedestalBgRef.current
         : bgImgRefs.current[gs.level - 1];
@@ -2572,9 +2589,8 @@ export default function GameCanvas() {
 
     if (gs.level !== 4) drawHUDOverlay(ctx, gs.level, gs.scrollX, gs.levelLength);
 
-    const lvlNames = ["FOREST ZONE", "DUNGEON ZONE", "LAVA ZONE", "FINAL CHAMBER"];
     ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = '7px "Press Start 2P", cursive';
-    ctx.textAlign = "right"; ctx.fillText(lvlNames[gs.level - 1] ?? "", CANVAS_W - 10, CANVAS_H - 6);
+    ctx.textAlign = "right"; ctx.fillText(LEVEL_NAMES[gs.level - 1] ?? "", CANVAS_W - 10, CANVAS_H - 6);
 
     if (typeof gs.ammo === "number" && gs.ammo <= 5 && gs.ammo > 0 && Math.sin(tick * 0.2) > 0) {
       ctx.fillStyle = "#FF4444"; ctx.font = '8px "Press Start 2P", cursive';
@@ -2670,16 +2686,14 @@ export default function GameCanvas() {
     grad.addColorStop(0, "#001a00"); grad.addColorStop(1, "#003300");
     ctx.fillStyle = grad; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     for (let i = 0; i < 30; i++) {
-      const colors = ["#FFD700","#FF8C00","#00FF00","#00FFFF","#FF69B4"];
-      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillStyle = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
       ctx.fillRect((i * 137 * tick) % CANVAS_W, (i * 73 + tick * (i % 5 + 1)) % CANVAS_H, 4, 4);
     }
     ctx.fillStyle = "#FFD700"; ctx.font = '24px "Press Start 2P", cursive';
     ctx.textAlign = "center"; ctx.shadowColor = "#FF8C00"; ctx.shadowBlur = 15;
     ctx.fillText("LEVEL CLEAR!", CANVAS_W / 2, 120); ctx.shadowBlur = 0;
-    const lvlNames = ["FOREST ZONE","DUNGEON ZONE","LAVA ZONE"];
     ctx.fillStyle = "#ffffff"; ctx.font = '9px "Press Start 2P", cursive';
-    ctx.fillText(lvlNames[gs.level - 1] ?? "", CANVAS_W / 2, 155);
+    ctx.fillText(LEVEL_NAMES[gs.level - 1] ?? "", CANVAS_W / 2, 155);
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
     ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, 200);
     ctx.fillStyle = "#aaa"; ctx.font = '8px "Press Start 2P", cursive';

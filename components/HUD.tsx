@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 interface HUDProps {
   score: number;
   level: number;
@@ -8,7 +10,7 @@ interface HUDProps {
   ammo: number;
 }
 
-export default function HUD({ score, level, lives, collectedBoxes, ammo }: HUDProps) {
+function HUD({ score, level, lives, collectedBoxes, ammo }: HUDProps) {
   const letters = ["L", "J", "S"];
 
   return (
@@ -70,3 +72,6 @@ export default function HUD({ score, level, lives, collectedBoxes, ammo }: HUDPr
     </div>
   );
 }
+
+// Re-rendered ~10x/sec from the game loop; memo keeps it to actual changes.
+export default memo(HUD);
