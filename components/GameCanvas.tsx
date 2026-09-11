@@ -11,6 +11,22 @@ const CANVAS_H = 450;
 // Backgrounds are always blitted at this size (see renderGame / boss room).
 // Sources are 1672x941, so we pre-scale once on load instead of resampling
 // a 1.5-megapixel image three times per frame.
+// The simulation runs at a fixed 60 steps/sec. Every physics constant in this
+// file is expressed per-step (GRAVITY, JUMP_FORCE, and every timer decremented
+// by 1), so the loop must not advance them once per rendered frame - that made
+// the game run at double speed on a 120Hz display and in slow motion whenever
+// the browser throttled rAF.
+const STEP_MS = 1000 / 60;
+// A gap longer than this (backgrounded tab, stalled main thread) is treated as
+// a single step rather than simulated in full: catching up would teleport the
+// player through hazards. This matches the old one-step-per-callback behaviour.
+const MAX_FRAME_GAP_MS = 100;
+// Safety valve so a slow device can never spiral into ever-longer catch-ups.
+const MAX_STEPS_PER_FRAME = 5;
+// Frame deltas never land exactly on STEP_MS - vsync jitters, and accumulating
+// floats drifts - so a frame arriving a hair early must still count as a step.
+// Without this a display running at exactly 60Hz intermittently drops one.
+const STEP_TOLERANCE_MS = 0.5;
 const BG_TILE_W = 850;
 const BG_TILE_H = 400;
 const GRAVITY = 0.55;
@@ -1310,7 +1326,10 @@ export default function GameCanvas() {
   });
   const [gamePhase, setGamePhase] = useState<"title" | "playing" | "dead" | "levelComplete" | "win">("title");
   const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [highScore, setHighScore] = useState(0);
+  // A ref, not state: only the canvas draw paths read this, and the RAF effect
+  // has [] deps - so a state value would be captured from render 0 and the
+  // HI: readout would never update. Nothing in the JSX uses it.
+  const highScoreRef = useRef(0);
   const [isPortrait, setIsPortrait] = useState(false);
   const isIOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
 
@@ -1326,7 +1345,7 @@ export default function GameCanvas() {
   // Load high score on mount
   useEffect(() => {
     const stored = localStorage.getItem("pixelrunner_highscore");
-    if (stored) setHighScore(parseInt(stored, 10) || 0);
+    if (stored) highScoreRef.current = parseInt(stored, 10) || 0;
   }, []);
 
   useEffect(() => {
@@ -1409,13 +1428,10 @@ export default function GameCanvas() {
   }, []);
 
   function updateHighScore(score: number) {
-    setHighScore((prev) => {
-      if (score > prev) {
-        localStorage.setItem("pixelrunner_highscore", String(score));
-        return score;
-      }
-      return prev;
-    });
+    if (score > highScoreRef.current) {
+      highScoreRef.current = score;
+      localStorage.setItem("pixelrunner_highscore", String(score));
+    }
   }
 
   function ensureAudio() {
@@ -1593,9 +1609,32 @@ export default function GameCanvas() {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
 
-    function gameLoop() {
+    let lastFrameMs = -1;
+    let accumulator = 0;
+
+    function gameLoop(nowMs: number) {
       animFrameRef.current = requestAnimationFrame(gameLoop);
-      tickRef.current++;
+
+      // ── Advance the simulation on wall-clock time, not frame count ──
+      if (lastFrameMs < 0) lastFrameMs = nowMs;
+      let elapsed = nowMs - lastFrameMs;
+      lastFrameMs = nowMs;
+      if (elapsed > MAX_FRAME_GAP_MS) elapsed = STEP_MS;
+      accumulator += elapsed;
+
+      let steps = 0;
+      while (accumulator >= STEP_MS - STEP_TOLERANCE_MS && steps < MAX_STEPS_PER_FRAME) {
+        accumulator = Math.max(0, accumulator - STEP_MS);
+        steps++;
+        tickRef.current++;
+        // tick drives the title/dead/win screen animations too, so it advances
+        // every step regardless of phase; only live play needs updateGame.
+        const g = stateRef.current;
+        if (g && g.phase === "playing") updateGame(g, tickRef.current);
+      }
+      if (steps === MAX_STEPS_PER_FRAME) accumulator = 0;
+
+      // ── Render once per rendered frame, whatever the step count was ──
       const tick = tickRef.current;
       const gs   = stateRef.current;
       // Kept: renderGame translates the context for screen shake, so without
@@ -1607,7 +1646,6 @@ export default function GameCanvas() {
       if (gs.phase === "dead")             { drawDeadScreen(ctx, gs, tick); return; }
       if (gs.phase === "levelComplete")    { drawLevelCompleteScreen(ctx, gs, tick); return; }
 
-      updateGame(gs, tick);
       renderGame(ctx, gs, tick);
     }
 
@@ -2637,12 +2675,12 @@ export default function GameCanvas() {
     }
 
     // High score overlay (top-left, subtle)
-    if (highScore > 0) {
+    if (highScoreRef.current > 0) {
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(8, 8, 140, 18);
       ctx.fillStyle = "#FFD700"; ctx.font = '7px "Press Start 2P", cursive';
       ctx.textAlign = "left";
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, 14, 21);
+      ctx.fillText(`HI: ${String(highScoreRef.current).padStart(6, "0")}`, 14, 21);
     }
 
     // Blinking prompt that pulses over the image's "PRESS START" area
@@ -2669,9 +2707,9 @@ export default function GameCanvas() {
     }
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
     ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 5);
-    if (highScore > 0) {
+    if (highScoreRef.current > 0) {
       ctx.fillStyle = "#FFA500"; ctx.font = '8px "Press Start 2P", cursive';
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 27);
+      ctx.fillText(`HI: ${String(highScoreRef.current).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 27);
     }
     ctx.fillStyle = gs.lives > 0 ? "#aaa" : "#888"; ctx.font = '8px "Press Start 2P", cursive';
     ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 50);
