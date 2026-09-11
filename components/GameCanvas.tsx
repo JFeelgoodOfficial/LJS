@@ -1310,7 +1310,10 @@ export default function GameCanvas() {
   });
   const [gamePhase, setGamePhase] = useState<"title" | "playing" | "dead" | "levelComplete" | "win">("title");
   const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [highScore, setHighScore] = useState(0);
+  // A ref, not state: only the canvas draw paths read this, and the RAF effect
+  // has [] deps - so a state value would be captured from render 0 and the
+  // HI: readout would never update. Nothing in the JSX uses it.
+  const highScoreRef = useRef(0);
   const [isPortrait, setIsPortrait] = useState(false);
   const isIOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
 
@@ -1326,7 +1329,7 @@ export default function GameCanvas() {
   // Load high score on mount
   useEffect(() => {
     const stored = localStorage.getItem("pixelrunner_highscore");
-    if (stored) setHighScore(parseInt(stored, 10) || 0);
+    if (stored) highScoreRef.current = parseInt(stored, 10) || 0;
   }, []);
 
   useEffect(() => {
@@ -1409,13 +1412,10 @@ export default function GameCanvas() {
   }, []);
 
   function updateHighScore(score: number) {
-    setHighScore((prev) => {
-      if (score > prev) {
-        localStorage.setItem("pixelrunner_highscore", String(score));
-        return score;
-      }
-      return prev;
-    });
+    if (score > highScoreRef.current) {
+      highScoreRef.current = score;
+      localStorage.setItem("pixelrunner_highscore", String(score));
+    }
   }
 
   function ensureAudio() {
@@ -2637,12 +2637,12 @@ export default function GameCanvas() {
     }
 
     // High score overlay (top-left, subtle)
-    if (highScore > 0) {
+    if (highScoreRef.current > 0) {
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(8, 8, 140, 18);
       ctx.fillStyle = "#FFD700"; ctx.font = '7px "Press Start 2P", cursive';
       ctx.textAlign = "left";
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, 14, 21);
+      ctx.fillText(`HI: ${String(highScoreRef.current).padStart(6, "0")}`, 14, 21);
     }
 
     // Blinking prompt that pulses over the image's "PRESS START" area
@@ -2669,9 +2669,9 @@ export default function GameCanvas() {
     }
     ctx.fillStyle = "#FFD700"; ctx.font = '10px "Press Start 2P", cursive';
     ctx.fillText(`SCORE: ${String(gs.score).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 5);
-    if (highScore > 0) {
+    if (highScoreRef.current > 0) {
       ctx.fillStyle = "#FFA500"; ctx.font = '8px "Press Start 2P", cursive';
-      ctx.fillText(`HI: ${String(highScore).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 27);
+      ctx.fillText(`HI: ${String(highScoreRef.current).padStart(6, "0")}`, CANVAS_W / 2, CANVAS_H / 2 + 27);
     }
     ctx.fillStyle = gs.lives > 0 ? "#aaa" : "#888"; ctx.font = '8px "Press Start 2P", cursive';
     ctx.fillText(gs.lives > 0 ? `${gs.lives} ${gs.lives === 1 ? "LIFE" : "LIVES"} REMAINING` : "NO LIVES LEFT — RESTARTING", CANVAS_W / 2, CANVAS_H / 2 + 50);
