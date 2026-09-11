@@ -1355,7 +1355,7 @@ export default function GameCanvas() {
 
   useEffect(() => {
     const img = new Image();
-    img.src = "/LJS-title.png";
+    img.src = "/LJS-title.webp";
     img.onload = () => { titleImgRef.current = img; };
   }, []);
 
